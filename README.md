@@ -2,11 +2,11 @@
 
 A read-only REST API for internal services. It serves three MSME analytics tables from the Cloud SQL Postgres database `bq_to_pg` and runs on **Cloud Run**. Jenkins builds and deploys it.
 
-| Branch        | Environment | GCP project        | Cloud SQL instance                           |
-| ------------- | ----------- | ------------------ | -------------------------------------------- |
-| `release/gke` | QA          | `jswone-qa-356112` | `jswone-qa-356112:asia-south1:ccp-mou-db-qa` |
-| `preprod/gke` | Preprod     | TODO               | TODO                                         |
-| `master/gke`  | Prod        | TODO               | TODO                                         |
+| Branch        | Environment | GCP project        | Cloud SQL instance                    |
+| ------------- | ----------- | ------------------ | ------------------------------------- |
+| `release/gke` | QA          | `jswone-qa-356112` | `jswone-qa-356112:asia-south1:ccp-qa` |
+| `preprod/gke` | Preprod     | TODO               | TODO                                  |
+| `master/gke`  | Prod        | TODO               | TODO                                  |
 
 Stack: Node 20, TypeScript, Fastify, `pg`, Zod, Vitest.
 
@@ -71,7 +71,7 @@ Notes:
 
 ```bash
 cp .env.example .env              # add the QA DB user/password and an API key
-cloud-sql-proxy jswone-qa-356112:asia-south1:ccp-mou-db-qa --port 5432   # needs roles/cloudsql.client
+cloud-sql-proxy jswone-qa-356112:asia-south1:ccp-qa --port 5433   # needs roles/cloudsql.client
 npm ci
 npm run dev                       # http://localhost:8080
 npm test                          # unit and route tests (no DB needed)

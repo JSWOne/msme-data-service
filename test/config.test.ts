@@ -6,7 +6,7 @@ const base = {
   DB_USER: 'reader',
   DB_PASSWORD: 'secret',
   API_KEYS: 'key-aaaaaaaaaaaaaaaa, key-bbbbbbbbbbbbbbbb',
-  INSTANCE_CONNECTION_NAME: 'jswone-qa-356112:asia-south1:ccp-mou-db-qa',
+  INSTANCE_CONNECTION_NAME: 'jswone-qa-356112:asia-south1:ccp-qa',
 };
 
 describe('loadConfig', () => {
