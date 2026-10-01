@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --env-file=.env \"/c/Users/DEEPTH~1/AppData/Local/Temp/claude/c--Users-Deepthi-V-C-msme-data-service/e77dea3a-b37d-456f-9759-823c43c43bc4/scratchpad/diag.cjs\")",
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "PowerShell(npm start)"
+    ]
+  }
+}

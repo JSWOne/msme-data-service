@@ -1,0 +1,120 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import { API_KEY, fakeDb, testApp } from './helpers';
+
+let app: FastifyInstance;
+afterEach(async () => app?.close());
+
+const auth = { 'x-api-key': API_KEY };
+
+describe('health', () => {
+  it('serves /healthz and /readyz without an API key', async () => {
+    app = testApp();
+    expect((await app.inject('/healthz')).statusCode).toBe(200);
+    expect((await app.inject('/readyz')).json()).toEqual({ status: 'ready' });
+  });
+
+  it('returns 503 from /readyz when the DB is down', async () => {
+    const db = fakeDb();
+    db.failWith = new Error('connection refused');
+    app = testApp(db);
+    expect((await app.inject('/readyz')).statusCode).toBe(503);
+  });
+});
+
+describe('API key', () => {
+  it.each([undefined, 'wrong-key-0123456789'])('rejects key %s with 401', async (key) => {
+    app = testApp();
+    const res = await app.inject({
+      url: '/v1/dealer-month-activity',
+      headers: key ? { 'x-api-key': key } : {},
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('table routes', () => {
+  it.each(['dealer-month-activity', 'high-potential-taluka-month', 'user-month-summary'])(
+    'GET /v1/%s returns data with pagination',
+    async (slug) => {
+      const db = fakeDb();
+      db.rows = [{ dealer_id: 'A' }, { dealer_id: 'B' }, { dealer_id: 'C' }];
+      app = testApp(db);
+      const res = await app.inject({ url: `/v1/${slug}?limit=2`, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        data: [{ dealer_id: 'A' }, { dealer_id: 'B' }],
+        pagination: { limit: 2, offset: 0, count: 2, hasMore: true },
+      });
+      expect(db.calls.at(-1)?.text).toMatch(/^SELECT \* FROM "public"\."fct_\w+_table"/);
+    },
+  );
+
+  it('reports hasMore=false on the last page', async () => {
+    const db = fakeDb();
+    db.rows = [{ dealer_id: 'A' }];
+    app = testApp(db);
+    const res = await app.inject({ url: '/v1/user-month-summary?limit=5', headers: auth });
+    expect(res.json().pagination).toEqual({ limit: 5, offset: 0, count: 1, hasMore: false });
+  });
+
+  it('lists columns', async () => {
+    app = testApp();
+    const res = await app.inject({ url: '/v1/dealer-month-activity/columns', headers: auth });
+    expect(res.json()).toMatchObject({
+      table: 'public.fct_dealer_month_activity_table',
+      columns: [
+        { name: 'month', dataType: 'date' },
+        { name: 'dealer_id' },
+        { name: 'order_value' },
+        { name: 'meta' },
+      ],
+    });
+  });
+
+  it('returns 400 for an unknown filter column', async () => {
+    app = testApp();
+    const res = await app.inject({ url: '/v1/dealer-month-activity?bogus=1', headers: auth });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toMatch(/Unknown query parameter 'bogus'/);
+  });
+
+  it('maps a Postgres invalid-value error to 400', async () => {
+    const db = fakeDb();
+    db.failWith = Object.assign(new Error('invalid input syntax for type date'), { code: '22007' });
+    app = testApp(db);
+    const res = await app.inject({ url: '/v1/dealer-month-activity?month=nope', headers: auth });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('maps a statement timeout to 504', async () => {
+    const db = fakeDb();
+    db.failWith = Object.assign(new Error('canceling statement'), { code: '57014' });
+    app = testApp(db);
+    const res = await app.inject({ url: '/v1/dealer-month-activity', headers: auth });
+    expect(res.statusCode).toBe(504);
+  });
+
+  it('maps an unreachable DB to 503', async () => {
+    const db = fakeDb();
+    db.failWith = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    app = testApp(db);
+    const res = await app.inject({ url: '/v1/dealer-month-activity', headers: auth });
+    expect(res.statusCode).toBe(503);
+  });
+
+  it('hides internal error details', async () => {
+    const db = fakeDb();
+    db.failWith = new Error('password authentication failed for user x');
+    app = testApp(db);
+    const res = await app.inject({ url: '/v1/dealer-month-activity', headers: auth });
+    expect(res.statusCode).toBe(500);
+    expect(res.body).not.toContain('password');
+  });
+
+  it('returns 404 for unknown tables', async () => {
+    app = testApp();
+    const res = await app.inject({ url: '/v1/pg_shadow', headers: auth });
+    expect(res.statusCode).toBe(404);
+  });
+});
