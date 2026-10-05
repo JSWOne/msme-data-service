@@ -22,6 +22,23 @@ describe('health', () => {
   });
 });
 
+describe('BASE_PATH', () => {
+  it('serves every route under the prefix and nothing at the root', async () => {
+    app = testApp(fakeDb(), '/msme-data-service');
+    expect((await app.inject('/msme-data-service/healthz')).statusCode).toBe(200);
+    expect((await app.inject('/msme-data-service/readyz')).json()).toEqual({ status: 'ready' });
+    const data = await app.inject({
+      url: '/msme-data-service/v1/dealer-month-activity',
+      headers: auth,
+    });
+    expect(data.statusCode).toBe(200);
+    expect(
+      (await app.inject({ url: '/msme-data-service/v1/dealer-month-activity' })).statusCode,
+    ).toBe(401);
+    expect((await app.inject('/healthz')).statusCode).toBe(404);
+  });
+});
+
 describe('API key', () => {
   it.each([undefined, 'wrong-key-0123456789'])('rejects key %s with 401', async (key) => {
     app = testApp();

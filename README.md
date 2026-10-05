@@ -157,3 +157,4 @@ The deploy script stops with an error if any required value in the env file stil
 | `STATEMENT_TIMEOUT_MS`     | 10000    | Longest a single query may run                                                                |
 | `SCHEMA_CACHE_TTL_MS`      | 600000   | How long the column whitelist is cached                                                       |
 | `LOG_LEVEL`                | info     | Logs are JSON with `severity`, in the format Cloud Logging reads                              |
+| `BASE_PATH`                | –        | Prefix for every route (QA: `/msme-data-service`). Empty serves routes at the root.           |

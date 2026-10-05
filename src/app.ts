@@ -8,7 +8,8 @@ import { healthRoutes } from './routes/health';
 import { tableRoutes } from './routes/tables';
 
 export interface AppDeps {
-  config: Pick<Config, 'API_KEYS' | 'LOG_LEVEL' | 'SCHEMA_CACHE_TTL_MS'>;
+  config: Pick<Config, 'API_KEYS' | 'LOG_LEVEL' | 'SCHEMA_CACHE_TTL_MS'> &
+    Partial<Pick<Config, 'BASE_PATH'>>;
   db: Db;
   logger?: FastifyServerOptions['logger'];
 }
@@ -30,15 +31,20 @@ export function buildApp({ config, db, logger }: AppDeps): FastifyInstance {
   });
 
   registerErrorHandlers(app);
-  void app.register(healthRoutes(db));
 
   const schema = new SchemaCache(db, config.SCHEMA_CACHE_TTL_MS);
   void app.register(
-    async (v1) => {
-      v1.addHook('onRequest', apiKeyHook(config.API_KEYS));
-      await v1.register(tableRoutes(db, schema));
+    async (base) => {
+      await base.register(healthRoutes(db));
+      await base.register(
+        async (v1) => {
+          v1.addHook('onRequest', apiKeyHook(config.API_KEYS));
+          await v1.register(tableRoutes(db, schema));
+        },
+        { prefix: '/v1' },
+      );
     },
-    { prefix: '/v1' },
+    { prefix: config.BASE_PATH ?? '' },
   );
 
   return app;

@@ -5,6 +5,13 @@ const configSchema = z
     APP_ENV: z.enum(['local', 'qa', 'preprod', 'prod']).default('local'),
     PORT: z.coerce.number().int().positive().default(8080),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+    // Path prefix for every route, for when a load balancer forwards the full public path
+    // (e.g. /msme-data-service). Empty = routes at the root. A trailing slash is ignored.
+    BASE_PATH: z
+      .string()
+      .regex(/^(\/[A-Za-z0-9._~-]+)*\/?$/, 'must be empty or a path like /msme-data-service')
+      .default('')
+      .transform((p) => p.replace(/\/+$/, '')),
 
     // Cloud Run: set INSTANCE_CONNECTION_NAME (project:region:instance) and the service
     // connects through the built-in Cloud SQL Auth Proxy unix socket.

@@ -36,9 +36,14 @@ export function fakeDb(): FakeDb {
   return db;
 }
 
-export function testApp(db: Db = fakeDb()) {
+export function testApp(db: Db = fakeDb(), basePath = '') {
   return buildApp({
-    config: { API_KEYS: [API_KEY], LOG_LEVEL: 'silent' as never, SCHEMA_CACHE_TTL_MS: 0 },
+    config: {
+      API_KEYS: [API_KEY],
+      LOG_LEVEL: 'silent' as never,
+      SCHEMA_CACHE_TTL_MS: 0,
+      BASE_PATH: basePath,
+    },
     db,
     logger: false,
   });

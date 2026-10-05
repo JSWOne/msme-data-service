@@ -46,7 +46,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --image "$IMAGE" \
   --service-account "$SERVICE_ACCOUNT" \
   --add-cloudsql-instances "$INSTANCE_CONNECTION_NAME" \
-  --set-env-vars "APP_ENV=${APP_ENV},INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME},DB_NAME=${DB_NAME},LOG_LEVEL=${LOG_LEVEL},POOL_MAX=${POOL_MAX},STATEMENT_TIMEOUT_MS=${STATEMENT_TIMEOUT_MS}" \
+  --set-env-vars "APP_ENV=${APP_ENV},INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME},DB_NAME=${DB_NAME},LOG_LEVEL=${LOG_LEVEL},POOL_MAX=${POOL_MAX},STATEMENT_TIMEOUT_MS=${STATEMENT_TIMEOUT_MS},BASE_PATH=${BASE_PATH:-}" \
   --set-secrets "DB_USER=${SECRET_DB_USER}:latest,DB_PASSWORD=${SECRET_DB_PASSWORD}:latest,API_KEYS=${SECRET_API_KEYS}:latest" \
   --min-instances "$MIN_INSTANCES" \
   --max-instances "$MAX_INSTANCES" \
@@ -67,7 +67,7 @@ if [[ "${SMOKE_TEST:-true}" == "true" ]]; then
   for path in /healthz /readyz; do
     ok=false
     for _ in 1 2 3 4 5 6; do
-      if curl -fsS --max-time 10 "${URL}${path}"; then ok=true; echo; break; fi
+      if curl -fsS --max-time 10 "${URL}${BASE_PATH:-}${path}"; then ok=true; echo; break; fi
       sleep 5
     done
     $ok || { echo "ERROR: smoke test failed for ${path}" >&2; exit 1; }

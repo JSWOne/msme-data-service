@@ -22,6 +22,15 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...env, DB_HOST: '127.0.0.1' }).DB_HOST).toBe('127.0.0.1');
   });
 
+  it('normalises BASE_PATH and rejects malformed values', () => {
+    expect(loadConfig(base).BASE_PATH).toBe('');
+    expect(loadConfig({ ...base, BASE_PATH: '/msme-data-service/' }).BASE_PATH).toBe(
+      '/msme-data-service',
+    );
+    expect(loadConfig({ ...base, BASE_PATH: '/' }).BASE_PATH).toBe('');
+    expect(() => loadConfig({ ...base, BASE_PATH: 'msme-data-service' })).toThrow(/BASE_PATH/);
+  });
+
   it('rejects short API keys and missing secrets', () => {
     expect(() => loadConfig({ ...base, API_KEYS: 'short' })).toThrow(/at least 16/);
     expect(() => loadConfig({ ...base, DB_PASSWORD: '' })).toThrow(/DB_PASSWORD/);
