@@ -11,10 +11,12 @@ export const NEW_DEALER_COLUMNS = [
   'account_name',
   'is_new_dealer_this_month',
   'ordered_qty_mtd',
+  'invoice_qty_mtd',
   'ordered_date',
   'invoice_date',
   'l3m_avg_invoice_qty',
   'invoice_qty_target',
+  'taluka',
 ] as const;
 
 export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
