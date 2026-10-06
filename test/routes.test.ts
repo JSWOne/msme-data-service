@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { API_KEY, fakeDb, testApp } from './helpers';
+import { API_KEY, COLUMNS, fakeDb, testApp } from './helpers';
 
 let app: FastifyInstance;
 afterEach(async () => app?.close());
@@ -80,13 +80,71 @@ describe('table routes', () => {
     const res = await app.inject({ url: '/v1/dealer-month-activity/columns', headers: auth });
     expect(res.json()).toMatchObject({
       table: 'public.fct_dealer_month_activity_table',
-      columns: [
-        { name: 'month', dataType: 'date' },
-        { name: 'dealer_id' },
-        { name: 'order_value' },
-        { name: 'meta' },
-      ],
+      columns: COLUMNS.map((c) => ({ name: c.column_name, dataType: c.data_type })),
     });
+  });
+
+  it('GET /v1/dealer-month-activity/new-dealers filters to new dealers', async () => {
+    const db = fakeDb();
+    db.rows = [{ dealer_id: 'A' }];
+    app = testApp(db);
+    const res = await app.inject({
+      url: '/v1/dealer-month-activity/new-dealers?month.gte=2024-01-01&limit=10',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: [{ dealer_id: 'A' }],
+      pagination: { limit: 10, offset: 0, count: 1, hasMore: false },
+    });
+    const call = db.calls.at(-1);
+    expect(call?.text).toMatch(
+      /^SELECT "user_id", "user_name", "account_id", "is_new_dealer_this_month", "ordered_qty_mtd", "ordered_date", "invoice_date" FROM "public"\."fct_dealer_month_activity_table" WHERE /,
+    );
+    expect(call?.text).toContain('"is_new_dealer_this_month" = $2');
+    expect(call?.values?.slice(0, 2)).toEqual(['2024-01-01', 'true']);
+  });
+
+  it('new-dealers ignores a caller-supplied is_new_dealer_this_month', async () => {
+    const db = fakeDb();
+    app = testApp(db);
+    await app.inject({
+      url: '/v1/dealer-month-activity/new-dealers?is_new_dealer_this_month=false',
+      headers: auth,
+    });
+    expect(db.calls.at(-1)?.values?.[0]).toBe('true');
+  });
+
+  it('new-dealers requires an API key', async () => {
+    app = testApp();
+    const res = await app.inject({ url: '/v1/dealer-month-activity/new-dealers' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('GET /v1/high-potential-taluka-month/high-potential filters to high-potential rows', async () => {
+    const db = fakeDb();
+    db.rows = [{ taluka: 'T1' }];
+    app = testApp(db);
+    const res = await app.inject({
+      url: '/v1/high-potential-taluka-month/high-potential?is_high_potential=false&limit=5',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: [{ taluka: 'T1' }],
+      pagination: { limit: 5, offset: 0, count: 1, hasMore: false },
+    });
+    const call = db.calls.at(-1);
+    expect(call?.text).toMatch(
+      /^SELECT \* FROM "public"\."fct_high_potential_taluka_month_table" WHERE "is_high_potential" = \$1 /,
+    );
+    expect(call?.values?.[0]).toBe('true');
+  });
+
+  it('high-potential requires an API key', async () => {
+    app = testApp();
+    const res = await app.inject({ url: '/v1/high-potential-taluka-month/high-potential' });
+    expect(res.statusCode).toBe(401);
   });
 
   it('returns 400 for an unknown filter column', async () => {

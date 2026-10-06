@@ -14,12 +14,14 @@ Stack: Node 20, TypeScript, Fastify, `pg`, Zod, Vitest.
 
 Every `/v1/*` request needs the header `x-api-key: <key>`. The `/healthz` (liveness) and `/readyz` (checks the DB) endpoints don't need a key.
 
-| Endpoint                              | Table                                          |
-| ------------------------------------- | ---------------------------------------------- |
-| `GET /v1/dealer-month-activity`       | `public.fct_dealer_month_activity_table`       |
-| `GET /v1/high-potential-taluka-month` | `public.fct_high_potential_taluka_month_table` |
-| `GET /v1/user-month-summary`          | `public.fct_user_month_summary_table`          |
-| `GET /v1/<endpoint>/columns`          | Lists the table's columns and their types      |
+| Endpoint                                             | Table                                                                                                                                                                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /v1/dealer-month-activity`                      | `public.fct_dealer_month_activity_table`                                                                                                                                                                                 |
+| `GET /v1/high-potential-taluka-month`                | `public.fct_high_potential_taluka_month_table`                                                                                                                                                                           |
+| `GET /v1/user-month-summary`                         | `public.fct_user_month_summary_table`                                                                                                                                                                                    |
+| `GET /v1/dealer-month-activity/new-dealers`          | `public.fct_dealer_month_activity_table`, only rows where `is_new_dealer_this_month = true`; returns `user_id`, `user_name`, `account_id`, `is_new_dealer_this_month`, `ordered_qty_mtd`, `ordered_date`, `invoice_date` |
+| `GET /v1/high-potential-taluka-month/high-potential` | `public.fct_high_potential_taluka_month_table`, only rows where `is_high_potential = true`; returns every column                                                                                                         |
+| `GET /v1/<endpoint>/columns`                         | Lists the table's columns and their types                                                                                                                                                                                |
 
 ### Query parameters
 
