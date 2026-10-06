@@ -29,7 +29,7 @@ export function createPool(config: Config): pg.Pool {
     application_name: 'msme-data-service',
     ssl: {
     rejectUnauthorized: false
-  }
+  },
     // Defence in depth on top of the read-only DB user.
     options: '-c default_transaction_read_only=on',
   });
