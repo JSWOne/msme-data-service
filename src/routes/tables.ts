@@ -60,28 +60,54 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
     );
 
     app.get('/dealer-month-activity/current-month-invoiced', async (req) => {
-  const now = new Date();
+    const now = new Date();
 
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
 
-  const startOfMonth = `${year}-${month}-01`;
+    const startOfMonth = `${year}-${month}-01`;
 
-  const nextMonth = new Date(year, now.getMonth() + 1, 1);
+    const nextMonth = new Date(year, now.getMonth() + 1, 1);
 
-  const startOfNextMonth =
-    `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+    const startOfNextMonth =
+      `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
 
-  return listRows(
-    'dealer-month-activity',
-    {
-      ...(req.query as Record<string, unknown>),
-      'invoice_date.gte': startOfMonth,
-      'invoice_date.lt': startOfNextMonth,
-    },
-    NEW_DEALER_COLUMNS,
+    return listRows(
+      'dealer-month-activity',
+      {
+        ...(req.query as Record<string, unknown>),
+        'invoice_date.gte': startOfMonth,
+        'invoice_date.lt': startOfNextMonth,
+      },
+      NEW_DEALER_COLUMNS,
+  );});
+  
+  app.get('/dealer-month-activity/current-month-ordered', async (req) => {
+    const now = new Date();
+
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+
+    const startOfMonth = `${year}-${month}-01`;
+
+    const nextMonth = new Date(year, now.getMonth() + 1, 1);
+
+    const startOfNextMonth =
+      `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+
+    return listRows(
+      'dealer-month-activity',
+      {
+        ...(req.query as Record<string, unknown>),
+        'ordered_date.gte': startOfMonth,
+        'ordered_date.lt': startOfNextMonth,
+      },
+      NEW_DEALER_COLUMNS,
   );
+
 });
+
+
 
     // Only rows where is_high_potential is true, returning every column. Other query
     // parameters work as on /high-potential-taluka-month.
