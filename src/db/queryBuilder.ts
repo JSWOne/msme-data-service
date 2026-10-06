@@ -10,7 +10,7 @@ export const MAX_IN_VALUES = 100;
 
 const RESERVED_PARAMS = new Set(['limit', 'offset', 'sort', 'order']);
 
-const OPERATORS = ['eq', 'gte', 'lte', 'in'] as const;
+const OPERATORS = ['eq', 'gte', 'lte', 'lt', 'in'] as const;
 type Operator = (typeof OPERATORS)[number];
 
 // Types Postgres cannot ORDER BY; excluded from sorting and tie-breaking.
@@ -121,6 +121,9 @@ export function buildSelectQuery(
         break;
       case 'lte':
         where.push(`${col} <= ${bind(raw)}`);
+        break;
+      case 'lt':
+        where.push(`${col} < ${bind(raw)}`);
         break;
       case 'in': {
         const list = raw

@@ -8,10 +8,13 @@ export const NEW_DEALER_COLUMNS = [
   'user_id',
   'user_name',
   'account_id',
+  'account_name',
   'is_new_dealer_this_month',
   'ordered_qty_mtd',
   'ordered_date',
   'invoice_date',
+  'l3m_avg_invoice_qty',
+  'invoice_qty_target',
 ] as const;
 
 export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
@@ -53,6 +56,30 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
         NEW_DEALER_COLUMNS,
       ),
     );
+
+    app.get('/dealer-month-activity/current-month-invoiced', async (req) => {
+  const now = new Date();
+
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+
+  const startOfMonth = `${year}-${month}-01`;
+
+  const nextMonth = new Date(year, now.getMonth() + 1, 1);
+
+  const startOfNextMonth =
+    `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+
+  return listRows(
+    'dealer-month-activity',
+    {
+      ...(req.query as Record<string, unknown>),
+      'invoice_date.gte': startOfMonth,
+      'invoice_date.lt': startOfNextMonth,
+    },
+    NEW_DEALER_COLUMNS,
+  );
+});
 
     // Only rows where is_high_potential is true, returning every column. Other query
     // parameters work as on /high-potential-taluka-month.
