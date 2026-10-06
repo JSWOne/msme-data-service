@@ -19,6 +19,20 @@ describe('buildSelectQuery', () => {
     expect(q).toMatchObject({ limit: 100, offset: 0 });
   });
 
+  it('selects only the requested columns', () => {
+    const q = buildSelectQuery(T, columns, { meta: 'x' }, ['dealer_id', 'month']);
+    expect(q.text).toMatch(
+      /^SELECT "dealer_id", "month" FROM "public"\."fct_dealer_month_activity_table" WHERE "meta" = \$1 /,
+    );
+  });
+
+  it('throws a server error when a selected column is missing', () => {
+    expect(() => buildSelectQuery(T, columns, {}, ['dealer_id', 'nope'])).toThrow(
+      'Columns not found in fct_dealer_month_activity_table: nope',
+    );
+    expect(() => buildSelectQuery(T, columns, {}, ['nope'])).not.toThrow(BadRequestError);
+  });
+
   it('builds parameterised filters for every operator', () => {
     const q = buildSelectQuery(T, columns, {
       dealer_id: 'D1',

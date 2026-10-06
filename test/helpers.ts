@@ -9,6 +9,14 @@ export const COLUMNS = [
   { column_name: 'dealer_id', data_type: 'text' },
   { column_name: 'order_value', data_type: 'numeric' },
   { column_name: 'meta', data_type: 'json' },
+  { column_name: 'is_new_dealer_this_month', data_type: 'boolean' },
+  { column_name: 'user_id', data_type: 'text' },
+  { column_name: 'user_name', data_type: 'text' },
+  { column_name: 'account_id', data_type: 'text' },
+  { column_name: 'ordered_qty_mtd', data_type: 'numeric' },
+  { column_name: 'ordered_date', data_type: 'date' },
+  { column_name: 'invoice_date', data_type: 'date' },
+  { column_name: 'is_high_potential', data_type: 'boolean' },
 ];
 
 export interface FakeDb extends Db {

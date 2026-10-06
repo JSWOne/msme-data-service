@@ -60,15 +60,29 @@ function parseFilterKey(key: string, columnNames: Set<string>): { column: string
   );
 }
 
+function buildProjection(
+  table: string,
+  columnNames: Set<string>,
+  select: readonly string[] | undefined,
+): string {
+  if (!select?.length) return '*';
+  // A missing column is a server-side misconfiguration, not a bad request, so it surfaces as 500.
+  const missing = select.filter((c) => !columnNames.has(c));
+  if (missing.length) throw new Error(`Columns not found in ${table}: ${missing.join(', ')}`);
+  return select.map(quoteIdent).join(', ');
+}
+
 /**
  * Builds a parameterised SELECT. Identifiers come only from the information_schema
  * whitelist (and are quoted); every user-supplied value is a bind parameter.
  * Fetches limit+1 rows so the caller can compute hasMore without a COUNT(*).
+ * `select` limits the returned columns (default: all); filtering and sorting still see every column.
  */
 export function buildSelectQuery(
   table: string,
   columns: readonly ColumnInfo[],
   query: Record<string, unknown>,
+  select?: readonly string[],
 ): SelectQuery {
   for (const [key, value] of Object.entries(query)) {
     if (typeof value !== 'string') {
@@ -85,6 +99,8 @@ export function buildSelectQuery(
   const { limit, offset, sort, order } = parsed.data;
 
   const columnNames = new Set(columns.map((c) => c.name));
+  const projection = buildProjection(table, columnNames, select);
+
   const values: unknown[] = [];
   const bind = (v: unknown): string => {
     values.push(v);
@@ -135,7 +151,7 @@ export function buildSelectQuery(
   if (primaryIdx > 0) orderBy.unshift(...orderBy.splice(primaryIdx, 1));
 
   const text = [
-    `SELECT * FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
+    `SELECT ${projection} FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
     where.length ? `WHERE ${where.join(' AND ')}` : '',
     orderBy.length ? `ORDER BY ${orderBy.join(', ')}` : '',
     `LIMIT ${bind(limit + 1)} OFFSET ${bind(offset)}`,

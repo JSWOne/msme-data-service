@@ -2,29 +2,65 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { Db } from '../db/pool';
 import { buildSelectQuery } from '../db/queryBuilder';
 import type { SchemaCache } from '../db/schema';
-import { DB_SCHEMA, TABLES, TABLE_SLUGS } from '../tables';
+import { DB_SCHEMA, TABLES, TABLE_SLUGS, type TableSlug } from '../tables';
+
+export const NEW_DEALER_COLUMNS = [
+  'user_id',
+  'user_name',
+  'account_id',
+  'is_new_dealer_this_month',
+  'ordered_qty_mtd',
+  'ordered_date',
+  'invoice_date',
+] as const;
 
 export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
+  async function listRows(
+    slug: TableSlug,
+    query: Record<string, unknown>,
+    select?: readonly string[],
+  ) {
+    const columns = await schema.columnsFor(slug);
+    const q = buildSelectQuery(TABLES[slug], columns, query, select);
+    const { rows } = await db.query(q.text, q.values);
+    const hasMore = rows.length > q.limit;
+    const data = hasMore ? rows.slice(0, q.limit) : rows;
+    return {
+      data,
+      pagination: { limit: q.limit, offset: q.offset, count: data.length, hasMore },
+    };
+  }
+
   return async (app) => {
     for (const slug of TABLE_SLUGS) {
       const table = TABLES[slug];
 
-      app.get(`/${slug}`, async (req) => {
-        const columns = await schema.columnsFor(slug);
-        const q = buildSelectQuery(table, columns, req.query as Record<string, unknown>);
-        const { rows } = await db.query(q.text, q.values);
-        const hasMore = rows.length > q.limit;
-        const data = hasMore ? rows.slice(0, q.limit) : rows;
-        return {
-          data,
-          pagination: { limit: q.limit, offset: q.offset, count: data.length, hasMore },
-        };
-      });
+      app.get(`/${slug}`, async (req) => listRows(slug, req.query as Record<string, unknown>));
 
       app.get(`/${slug}/columns`, async () => ({
         table: `${DB_SCHEMA}.${table}`,
         columns: await schema.columnsFor(slug),
       }));
     }
+
+    // Only rows where is_new_dealer_this_month is true, returning NEW_DEALER_COLUMNS. The filter
+    // is fixed; every other query parameter (paging, sorting, column filters) works as on
+    // /dealer-month-activity.
+    app.get('/dealer-month-activity/new-dealers', async (req) =>
+      listRows(
+        'dealer-month-activity',
+        { ...(req.query as Record<string, unknown>), is_new_dealer_this_month: 'true' },
+        NEW_DEALER_COLUMNS,
+      ),
+    );
+
+    // Only rows where is_high_potential is true, returning every column. Other query
+    // parameters work as on /high-potential-taluka-month.
+    app.get('/high-potential-taluka-month/high-potential', async (req) =>
+      listRows('high-potential-taluka-month', {
+        ...(req.query as Record<string, unknown>),
+        is_high_potential: 'true',
+      }),
+    );
   };
 }
