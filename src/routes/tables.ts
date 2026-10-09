@@ -17,6 +17,7 @@ export const NEW_DEALER_COLUMNS = [
   'l3m_avg_invoice_qty',
   'invoice_qty_target',
   'taluka',
+  'district',
 ] as const;
 
 export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
