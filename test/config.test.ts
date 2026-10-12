@@ -6,7 +6,7 @@ const base = {
   DB_USER: 'reader',
   DB_PASSWORD: 'secret',
   API_KEYS: 'key-aaaaaaaaaaaaaaaa, key-bbbbbbbbbbbbbbbb',
-  INSTANCE_CONNECTION_NAME: 'jswone-qa-356112:asia-south1:ccp-mou-db-qa',
+  INSTANCE_CONNECTION_NAME: 'jswone-qa-356112:asia-south1:ccp-qa',
 };
 
 describe('loadConfig', () => {
@@ -20,6 +20,15 @@ describe('loadConfig', () => {
     const { INSTANCE_CONNECTION_NAME: _, ...env } = base;
     expect(() => loadConfig(env)).toThrow(/INSTANCE_CONNECTION_NAME/);
     expect(loadConfig({ ...env, DB_HOST: '127.0.0.1' }).DB_HOST).toBe('127.0.0.1');
+  });
+
+  it('normalises BASE_PATH and rejects malformed values', () => {
+    expect(loadConfig(base).BASE_PATH).toBe('');
+    expect(loadConfig({ ...base, BASE_PATH: '/msme-data-service/' }).BASE_PATH).toBe(
+      '/msme-data-service',
+    );
+    expect(loadConfig({ ...base, BASE_PATH: '/' }).BASE_PATH).toBe('');
+    expect(() => loadConfig({ ...base, BASE_PATH: 'msme-data-service' })).toThrow(/BASE_PATH/);
   });
 
   it('rejects short API keys and missing secrets', () => {

@@ -2,11 +2,11 @@
 
 A read-only REST API for internal services. It serves three MSME analytics tables from the Cloud SQL Postgres database `bq_to_pg` and runs on **Cloud Run**. Jenkins builds and deploys it.
 
-| Branch        | Environment | GCP project        | Cloud SQL instance                           |
-| ------------- | ----------- | ------------------ | -------------------------------------------- |
-| `release/gke` | QA          | `jswone-qa-356112` | `jswone-qa-356112:asia-south1:ccp-mou-db-qa` |
-| `preprod/gke` | Preprod     | TODO               | TODO                                         |
-| `master/gke`  | Prod        | TODO               | TODO                                         |
+| Branch        | Environment | GCP project        | Cloud SQL instance                    |
+| ------------- | ----------- | ------------------ | ------------------------------------- |
+| `release/gke` | QA          | `jswone-qa-356112` | `jswone-qa-356112:asia-south1:ccp-qa` |
+| `preprod/gke` | Preprod     | TODO               | TODO                                  |
+| `master/gke`  | Prod        | TODO               | TODO                                  |
 
 Stack: Node 20, TypeScript, Fastify, `pg`, Zod, Vitest.
 
@@ -14,12 +14,13 @@ Stack: Node 20, TypeScript, Fastify, `pg`, Zod, Vitest.
 
 Every `/v1/*` request needs the header `x-api-key: <key>`. The `/healthz` (liveness) and `/readyz` (checks the DB) endpoints don't need a key.
 
-| Endpoint                              | Table                                          |
-| ------------------------------------- | ---------------------------------------------- |
-| `GET /v1/dealer-month-activity`       | `public.fct_dealer_month_activity_table`       |
-| `GET /v1/high-potential-taluka-month` | `public.fct_high_potential_taluka_month_table` |
-| `GET /v1/user-month-summary`          | `public.fct_user_month_summary_table`          |
-| `GET /v1/<endpoint>/columns`          | Lists the table's columns and their types      |
+| Endpoint                                             | Table                                                                                                                                                                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /v1/dealer-month-activity`                      | `public.fct_dealer_month_activity_table`                                                                                                                                                                                 |
+| `GET /v1/user-month-summary`                         | `public.fct_user_month_summary_table`                                                                                                                                                                                    |
+| `GET /v1/dealer-month-activity/new-dealers`          | `public.fct_dealer_month_activity_table`, only rows where `is_new_dealer_this_month = true`; returns `user_id`, `user_name`, `account_id`, `is_new_dealer_this_month`, `ordered_qty_mtd`, `ordered_date`, `invoice_date` |
+| `GET /v1/dealer-month-activity/high-potential`       | `public.fct_dealer_month_activity_table`, among rows where `is_high_potential = true`: `{ highPotentialTalukaCount, invoicedTalukaCount }` (distinct talukas; the second only where `invoice_date` is in the current month) |
+| `GET /v1/<endpoint>/columns`                         | Lists the table's columns and their types                                                                                                                                                                                |
 
 ### Query parameters
 
@@ -71,7 +72,7 @@ Notes:
 
 ```bash
 cp .env.example .env              # add the QA DB user/password and an API key
-cloud-sql-proxy jswone-qa-356112:asia-south1:ccp-mou-db-qa --port 5432   # needs roles/cloudsql.client
+cloud-sql-proxy jswone-qa-356112:asia-south1:ccp-qa --port 5433   # needs roles/cloudsql.client
 npm ci
 npm run dev                       # http://localhost:8080
 npm test                          # unit and route tests (no DB needed)
@@ -123,7 +124,6 @@ If the read-only DB user doesn't have SELECT on the tables yet:
 ```sql
 GRANT USAGE ON SCHEMA public TO <db-user>;
 GRANT SELECT ON public.fct_dealer_month_activity_table,
-                public.fct_high_potential_taluka_month_table,
                 public.fct_user_month_summary_table TO <db-user>;
 ```
 
@@ -157,3 +157,4 @@ The deploy script stops with an error if any required value in the env file stil
 | `STATEMENT_TIMEOUT_MS`     | 10000    | Longest a single query may run                                                                |
 | `SCHEMA_CACHE_TTL_MS`      | 600000   | How long the column whitelist is cached                                                       |
 | `LOG_LEVEL`                | info     | Logs are JSON with `severity`, in the format Cloud Logging reads                              |
+| `BASE_PATH`                | –        | Prefix for every route (QA: `/msme-data-service`). Empty serves routes at the root.           |

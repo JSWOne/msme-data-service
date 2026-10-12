@@ -9,6 +9,20 @@ export const COLUMNS = [
   { column_name: 'dealer_id', data_type: 'text' },
   { column_name: 'order_value', data_type: 'numeric' },
   { column_name: 'meta', data_type: 'json' },
+  { column_name: 'is_new_dealer_this_month', data_type: 'boolean' },
+  { column_name: 'user_id', data_type: 'text' },
+  { column_name: 'user_name', data_type: 'text' },
+  { column_name: 'account_id', data_type: 'text' },
+  { column_name: 'account_name', data_type: 'text' },
+  { column_name: 'ordered_qty_mtd', data_type: 'numeric' },
+  { column_name: 'invoice_qty_mtd', data_type: 'numeric' },
+  { column_name: 'ordered_date', data_type: 'date' },
+  { column_name: 'invoice_date', data_type: 'date' },
+  { column_name: 'l3m_avg_invoice_qty', data_type: 'numeric' },
+  { column_name: 'invoice_qty_target', data_type: 'numeric' },
+  { column_name: 'taluka', data_type: 'text' },
+  { column_name: 'district', data_type: 'text' },
+  { column_name: 'is_high_potential', data_type: 'boolean' },
 ];
 
 export interface FakeDb extends Db {
@@ -36,9 +50,14 @@ export function fakeDb(): FakeDb {
   return db;
 }
 
-export function testApp(db: Db = fakeDb()) {
+export function testApp(db: Db = fakeDb(), basePath = '') {
   return buildApp({
-    config: { API_KEYS: [API_KEY], LOG_LEVEL: 'silent' as never, SCHEMA_CACHE_TTL_MS: 0 },
+    config: {
+      API_KEYS: [API_KEY],
+      LOG_LEVEL: 'silent' as never,
+      SCHEMA_CACHE_TTL_MS: 0,
+      BASE_PATH: basePath,
+    },
     db,
     logger: false,
   });
