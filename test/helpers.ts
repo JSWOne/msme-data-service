@@ -13,9 +13,15 @@ export const COLUMNS = [
   { column_name: 'user_id', data_type: 'text' },
   { column_name: 'user_name', data_type: 'text' },
   { column_name: 'account_id', data_type: 'text' },
+  { column_name: 'account_name', data_type: 'text' },
   { column_name: 'ordered_qty_mtd', data_type: 'numeric' },
+  { column_name: 'invoice_qty_mtd', data_type: 'numeric' },
   { column_name: 'ordered_date', data_type: 'date' },
   { column_name: 'invoice_date', data_type: 'date' },
+  { column_name: 'l3m_avg_invoice_qty', data_type: 'numeric' },
+  { column_name: 'invoice_qty_target', data_type: 'numeric' },
+  { column_name: 'taluka', data_type: 'text' },
+  { column_name: 'district', data_type: 'text' },
   { column_name: 'is_high_potential', data_type: 'boolean' },
 ];
 

@@ -84,6 +84,88 @@ export function buildSelectQuery(
   query: Record<string, unknown>,
   select?: readonly string[],
 ): SelectQuery {
+  const { params, limit, offset, sort, order } = parseParams(query);
+
+  const columnNames = new Set(columns.map((c) => c.name));
+  const projection = buildProjection(table, columnNames, select);
+
+  const values: unknown[] = [];
+  const bind = (v: unknown): string => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+  const where = buildWhere(columnNames, params, bind);
+
+  const orderable = columns.filter((c) => !NON_ORDERABLE_TYPES.has(c.dataType));
+  if (sort !== undefined && !orderable.some((c) => c.name === sort)) {
+    throw new BadRequestError(`Cannot sort by '${sort}'`);
+  }
+  const primary = sort ?? orderable[0]?.name;
+  // Tie-break on every other orderable column so LIMIT/OFFSET paging is deterministic
+  // even though these tables have no declared unique key.
+  const orderBy = orderable.map(
+    (c) => `${quoteIdent(c.name)} ${c.name === primary ? order.toUpperCase() : 'ASC'}`,
+  );
+  const primaryIdx = orderable.findIndex((c) => c.name === primary);
+  if (primaryIdx > 0) orderBy.unshift(...orderBy.splice(primaryIdx, 1));
+
+  const text = [
+    `SELECT ${projection} FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
+    where.length ? `WHERE ${where.join(' AND ')}` : '',
+    orderBy.length ? `ORDER BY ${orderBy.join(', ')}` : '',
+    `LIMIT ${bind(limit + 1)} OFFSET ${bind(offset)}`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return { text, values, limit, offset };
+}
+
+/**
+ * Builds one row of `COUNT(DISTINCT <column>)` values over the rows matching the same filters as
+ * buildSelectQuery, one count per entry in `counts` (keyed by its result alias). Each count
+ * further narrows its rows with its own filters, written like query parameters (e.g.
+ * `{ 'invoice_date.gte': '2026-10-01' }`). NULL values of `column` are never counted.
+ * Paging and sorting parameters are validated but have no effect.
+ */
+export function buildDistinctCountsQuery(
+  table: string,
+  columns: readonly ColumnInfo[],
+  query: Record<string, unknown>,
+  column: string,
+  counts: Record<string, Record<string, string>>,
+): { text: string; values: unknown[] } {
+  const { params } = parseParams(query);
+
+  const columnNames = new Set(columns.map((c) => c.name));
+  if (!columnNames.has(column)) throw new Error(`Columns not found in ${table}: ${column}`);
+
+  const values: unknown[] = [];
+  const bind = (v: unknown): string => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+
+  const col = quoteIdent(column);
+  // Built before WHERE so placeholders are numbered in the order they appear in the SQL.
+  const projection = Object.entries(counts).map(([alias, filters]) => {
+    const conditions = buildWhere(columnNames, filters, bind);
+    const filter = conditions.length ? ` FILTER (WHERE ${conditions.join(' AND ')})` : '';
+    return `COUNT(DISTINCT ${col})${filter}::int AS ${quoteIdent(alias)}`;
+  });
+  const where = buildWhere(columnNames, params, bind);
+
+  const text = [
+    `SELECT ${projection.join(', ')} FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
+    where.length ? `WHERE ${where.join(' AND ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return { text, values };
+}
+
+function parseParams(query: Record<string, unknown>) {
   for (const [key, value] of Object.entries(query)) {
     if (typeof value !== 'string') {
       throw new BadRequestError(`Query parameter '${key}' must be given exactly once`);
@@ -96,17 +178,15 @@ export function buildSelectQuery(
     const issue = parsed.error.issues[0];
     throw new BadRequestError(`Invalid '${issue?.path.join('.')}': ${issue?.message}`);
   }
-  const { limit, offset, sort, order } = parsed.data;
+  return { params, ...parsed.data };
+}
 
-  const columnNames = new Set(columns.map((c) => c.name));
-  const projection = buildProjection(table, columnNames, select);
-
-  const values: unknown[] = [];
-  const bind = (v: unknown): string => {
-    values.push(v);
-    return `$${values.length}`;
-  };
-
+/** One WHERE condition per non-reserved query parameter; values go through `bind`. */
+function buildWhere(
+  columnNames: Set<string>,
+  params: Record<string, string>,
+  bind: (v: unknown) => string,
+): string[] {
   const where: string[] = [];
   for (const [key, raw] of Object.entries(params)) {
     if (RESERVED_PARAMS.has(key)) continue;
@@ -139,28 +219,5 @@ export function buildSelectQuery(
       }
     }
   }
-
-  const orderable = columns.filter((c) => !NON_ORDERABLE_TYPES.has(c.dataType));
-  if (sort !== undefined && !orderable.some((c) => c.name === sort)) {
-    throw new BadRequestError(`Cannot sort by '${sort}'`);
-  }
-  const primary = sort ?? orderable[0]?.name;
-  // Tie-break on every other orderable column so LIMIT/OFFSET paging is deterministic
-  // even though these tables have no declared unique key.
-  const orderBy = orderable.map(
-    (c) => `${quoteIdent(c.name)} ${c.name === primary ? order.toUpperCase() : 'ASC'}`,
-  );
-  const primaryIdx = orderable.findIndex((c) => c.name === primary);
-  if (primaryIdx > 0) orderBy.unshift(...orderBy.splice(primaryIdx, 1));
-
-  const text = [
-    `SELECT ${projection} FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
-    where.length ? `WHERE ${where.join(' AND ')}` : '',
-    orderBy.length ? `ORDER BY ${orderBy.join(', ')}` : '',
-    `LIMIT ${bind(limit + 1)} OFFSET ${bind(offset)}`,
-  ]
-    .filter(Boolean)
-    .join(' ');
-
-  return { text, values, limit, offset };
+  return where;
 }

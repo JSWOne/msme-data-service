@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { NEW_DEALER_COLUMNS } from '../src/routes/tables';
 import { API_KEY, COLUMNS, fakeDb, testApp } from './helpers';
 
 let app: FastifyInstance;
-afterEach(async () => app?.close());
+afterEach(async () => {
+  vi.useRealTimers();
+  await app?.close();
+});
 
 const auth = { 'x-api-key': API_KEY };
+const NEW_DEALER_SELECT = `SELECT ${NEW_DEALER_COLUMNS.map((c) => `"${c}"`).join(', ')} FROM "public"."fct_dealer_month_activity_table"`;
 
 describe('health', () => {
   it('serves /healthz and /readyz without an API key', async () => {
@@ -51,7 +56,7 @@ describe('API key', () => {
 });
 
 describe('table routes', () => {
-  it.each(['dealer-month-activity', 'high-potential-taluka-month', 'user-month-summary'])(
+  it.each(['dealer-month-activity', 'user-month-summary'])(
     'GET /v1/%s returns data with pagination',
     async (slug) => {
       const db = fakeDb();
@@ -98,9 +103,7 @@ describe('table routes', () => {
       pagination: { limit: 10, offset: 0, count: 1, hasMore: false },
     });
     const call = db.calls.at(-1);
-    expect(call?.text).toMatch(
-      /^SELECT "user_id", "user_name", "account_id", "is_new_dealer_this_month", "ordered_qty_mtd", "ordered_date", "invoice_date" FROM "public"\."fct_dealer_month_activity_table" WHERE /,
-    );
+    expect(call?.text.startsWith(`${NEW_DEALER_SELECT} WHERE `)).toBe(true);
     expect(call?.text).toContain('"is_new_dealer_this_month" = $2');
     expect(call?.values?.slice(0, 2)).toEqual(['2024-01-01', 'true']);
   });
@@ -121,30 +124,112 @@ describe('table routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('GET /v1/high-potential-taluka-month/high-potential filters to high-potential rows', async () => {
+  it('GET /v1/dealer-month-activity/high-potential returns both taluka counts', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 11, 15));
     const db = fakeDb();
-    db.rows = [{ taluka: 'T1' }];
+    db.rows = [{ highPotentialTalukaCount: 42, invoicedTalukaCount: 30 }];
     app = testApp(db);
     const res = await app.inject({
-      url: '/v1/high-potential-taluka-month/high-potential?is_high_potential=false&limit=5',
+      url: '/v1/dealer-month-activity/high-potential?is_high_potential=false&district=D1',
       headers: auth,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      data: [{ taluka: 'T1' }],
-      pagination: { limit: 5, offset: 0, count: 1, hasMore: false },
-    });
+    expect(res.json()).toEqual({ highPotentialTalukaCount: 42, invoicedTalukaCount: 30 });
+    const call = db.calls.at(-1);
+    expect(call?.text).toBe(
+      'SELECT COUNT(DISTINCT "taluka")::int AS "highPotentialTalukaCount", ' +
+        'COUNT(DISTINCT "taluka") FILTER (WHERE "invoice_date" >= $1 AND "invoice_date" < $2)::int AS "invoicedTalukaCount" ' +
+        'FROM "public"."fct_dealer_month_activity_table" WHERE "is_high_potential" = $3 AND "district" = $4',
+    );
+    // December rolls over into January of the next year.
+    expect(call?.values).toEqual(['2026-12-01', '2027-01-01', 'true', 'D1']);
+  });
+
+  it('high-potential limits only invoicedTalukaCount to the current month', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 12));
+    const db = fakeDb();
+    db.rows = [{ highPotentialTalukaCount: 1, invoicedTalukaCount: 0 }];
+    app = testApp(db);
+    await app.inject({ url: '/v1/dealer-month-activity/high-potential', headers: auth });
     const call = db.calls.at(-1);
     expect(call?.text).toMatch(
-      /^SELECT \* FROM "public"\."fct_high_potential_taluka_month_table" WHERE "is_high_potential" = \$1 /,
+      /^SELECT COUNT\(DISTINCT "taluka"\)::int AS "highPotentialTalukaCount", /,
     );
-    expect(call?.values?.[0]).toBe('true');
+    expect(call?.values).toEqual(['2026-10-01', '2026-11-01', 'true']);
+  });
+
+  it('high-potential-invoiced was merged into high-potential', async () => {
+    app = testApp();
+    const res = await app.inject({
+      url: '/v1/dealer-month-activity/high-potential-invoiced',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it('high-potential requires an API key', async () => {
     app = testApp();
-    const res = await app.inject({ url: '/v1/high-potential-taluka-month/high-potential' });
+    const res = await app.inject({ url: '/v1/dealer-month-activity/high-potential' });
     expect(res.statusCode).toBe(401);
+  });
+
+  it.each(['/v1/high-potential-taluka-month', '/v1/high-potential-taluka-month/high-potential'])(
+    '%s is gone (table removed from the database)',
+    async (url) => {
+      app = testApp();
+      const res = await app.inject({ url, headers: auth });
+      expect(res.statusCode).toBe(404);
+    },
+  );
+
+  describe.each([
+    ['current-month-invoiced', 'invoice_date'],
+    ['current-month-ordered', 'ordered_date'],
+  ])('GET /v1/dealer-month-activity/%s', (route, column) => {
+    const url = `/v1/dealer-month-activity/${route}`;
+
+    it(`filters ${column} to the current month and returns NEW_DEALER_COLUMNS`, async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 12, 13, 0));
+      const db = fakeDb();
+      db.rows = [{ user_id: 'U1' }];
+      app = testApp(db);
+      const res = await app.inject({ url: `${url}?taluka=T1&limit=10`, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        data: [{ user_id: 'U1' }],
+        pagination: { limit: 10, offset: 0, count: 1, hasMore: false },
+      });
+      const call = db.calls.at(-1);
+      expect(call?.text.startsWith(`${NEW_DEALER_SELECT} WHERE `)).toBe(true);
+      expect(call?.text).toContain(`"taluka" = $1 AND "${column}" >= $2 AND "${column}" < $3`);
+      expect(call?.values?.slice(0, 3)).toEqual(['T1', '2026-10-01', '2026-11-01']);
+    });
+
+    it('rolls December over into January of the next year', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 11, 31, 23, 0));
+      const db = fakeDb();
+      app = testApp(db);
+      await app.inject({ url, headers: auth });
+      expect(db.calls.at(-1)?.values?.slice(0, 2)).toEqual(['2026-12-01', '2027-01-01']);
+    });
+
+    it(`overrides a caller-supplied ${column} range`, async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 12));
+      const db = fakeDb();
+      app = testApp(db);
+      await app.inject({ url: `${url}?${column}.gte=2020-01-01`, headers: auth });
+      expect(db.calls.at(-1)?.values?.slice(0, 2)).toEqual(['2026-10-01', '2026-11-01']);
+    });
+
+    it('requires an API key', async () => {
+      app = testApp();
+      expect((await app.inject({ url })).statusCode).toBe(401);
+    });
   });
 
   it('returns 400 for an unknown filter column', async () => {
