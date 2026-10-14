@@ -4,6 +4,7 @@ export const DB_SCHEMA = 'public';
 export const TABLES = {
   'dealer-month-activity': 'fct_dealer_month_activity_table',
   'user-month-summary': 'fct_user_month_summary_table',
+  'high-potential-taluka-month': 'fct_high_potential_taluka_month_table',
 } as const;
 
 export type TableSlug = keyof typeof TABLES;
