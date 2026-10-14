@@ -124,39 +124,40 @@ describe('table routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('GET /v1/dealer-month-activity/high-potential returns both taluka counts', async () => {
+  it('GET /v1/dealer-month-activity/high-potential returns the invoiced taluka count', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 11, 15));
     const db = fakeDb();
-    db.rows = [{ highPotentialTalukaCount: 42, invoicedTalukaCount: 30 }];
+    db.rows = [{ invoicedTalukaCount: 30 }];
     app = testApp(db);
     const res = await app.inject({
       url: '/v1/dealer-month-activity/high-potential?is_high_potential=false&district=D1',
       headers: auth,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ highPotentialTalukaCount: 42, invoicedTalukaCount: 30 });
+    expect(res.json()).toEqual({ invoicedTalukaCount: 30 });
     const call = db.calls.at(-1);
     expect(call?.text).toBe(
-      'SELECT COUNT(DISTINCT "taluka")::int AS "highPotentialTalukaCount", ' +
-        'COUNT(DISTINCT "taluka") FILTER (WHERE "invoice_date" >= $1 AND "invoice_date" < $2)::int AS "invoicedTalukaCount" ' +
+      'SELECT COUNT(DISTINCT "taluka") FILTER (WHERE "invoice_date" >= $1 AND "invoice_date" < $2)::int AS "invoicedTalukaCount" ' +
         'FROM "public"."fct_dealer_month_activity_table" WHERE "is_high_potential" = $3 AND "district" = $4',
     );
     // December rolls over into January of the next year.
     expect(call?.values).toEqual(['2026-12-01', '2027-01-01', 'true', 'D1']);
   });
 
-  it('high-potential limits only invoicedTalukaCount to the current month', async () => {
+  it('high-potential only returns invoicedTalukaCount, limited to the current month', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 9, 12));
     const db = fakeDb();
-    db.rows = [{ highPotentialTalukaCount: 1, invoicedTalukaCount: 0 }];
+    db.rows = [{ invoicedTalukaCount: 0 }];
     app = testApp(db);
-    await app.inject({ url: '/v1/dealer-month-activity/high-potential', headers: auth });
+    const res = await app.inject({
+      url: '/v1/dealer-month-activity/high-potential',
+      headers: auth,
+    });
+    expect(res.json()).toEqual({ invoicedTalukaCount: 0 });
     const call = db.calls.at(-1);
-    expect(call?.text).toMatch(
-      /^SELECT COUNT\(DISTINCT "taluka"\)::int AS "highPotentialTalukaCount", /,
-    );
+    expect(call?.text).not.toContain('highPotentialTalukaCount');
     expect(call?.values).toEqual(['2026-10-01', '2026-11-01', 'true']);
   });
 
@@ -175,14 +176,70 @@ describe('table routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it.each(['/v1/high-potential-taluka-month', '/v1/high-potential-taluka-month/high-potential'])(
-    '%s is gone (table removed from the database)',
-    async (url) => {
-      app = testApp();
-      const res = await app.inject({ url, headers: auth });
-      expect(res.statusCode).toBe(404);
-    },
-  );
+  it('GET /v1/high-potential-taluka-month returns data with pagination', async () => {
+    const db = fakeDb();
+    db.rows = [{ taluka: 'A' }, { taluka: 'B' }];
+    app = testApp(db);
+    const res = await app.inject({
+      url: '/v1/high-potential-taluka-month?limit=1&taluka_potential=High',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: [{ taluka: 'A' }],
+      pagination: { limit: 1, offset: 0, count: 1, hasMore: true },
+    });
+    const call = db.calls.at(-1);
+    expect(call?.text).toMatch(
+      /^SELECT \* FROM "public"\."fct_high_potential_taluka_month_table" WHERE "taluka_potential" = \$1/,
+    );
+    expect(call?.values?.[0]).toBe('High');
+  });
+
+  it('lists columns of high-potential-taluka-month', async () => {
+    app = testApp();
+    const res = await app.inject({
+      url: '/v1/high-potential-taluka-month/columns',
+      headers: auth,
+    });
+    expect(res.json()).toMatchObject({ table: 'public.fct_high_potential_taluka_month_table' });
+  });
+
+  it('GET /v1/high-potential-taluka-month/high-potential-count counts High and Very High talukas', async () => {
+    const db = fakeDb();
+    db.rows = [{ highPotentialTalukaCount: 17 }];
+    app = testApp(db);
+    const res = await app.inject({
+      url: '/v1/high-potential-taluka-month/high-potential-count?district=D1',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ highPotentialTalukaCount: 17 });
+    const call = db.calls.at(-1);
+    expect(call?.text).toBe(
+      'SELECT COUNT(DISTINCT "taluka")::int AS "highPotentialTalukaCount" ' +
+        'FROM "public"."fct_high_potential_taluka_month_table" ' +
+        'WHERE "district" = $1 AND "taluka_potential" = ANY($2)',
+    );
+    expect(call?.values).toEqual(['D1', ['High', 'Very High']]);
+  });
+
+  it('high-potential-count ignores a caller-supplied taluka_potential.in', async () => {
+    const db = fakeDb();
+    db.rows = [{ highPotentialTalukaCount: 0 }];
+    app = testApp(db);
+    await app.inject({
+      url: '/v1/high-potential-taluka-month/high-potential-count?taluka_potential.in=Low',
+      headers: auth,
+    });
+    expect(db.calls.at(-1)?.values).toEqual([['High', 'Very High']]);
+  });
+
+  it('high-potential-count requires an API key', async () => {
+    app = testApp();
+    const res = await app.inject({ url: '/v1/high-potential-taluka-month/high-potential-count' });
+    expect(res.statusCode).toBe(401);
+  });
 
   describe.each([
     ['current-month-invoiced', 'invoice_date'],
