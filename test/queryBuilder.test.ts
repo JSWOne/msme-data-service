@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSelectQuery, quoteIdent } from '../src/db/queryBuilder';
+import { buildDistinctCountsQuery, buildSelectQuery, quoteIdent } from '../src/db/queryBuilder';
 import { BadRequestError } from '../src/errors';
 
 const columns = [
@@ -17,6 +17,20 @@ describe('buildSelectQuery', () => {
     );
     expect(q.values).toEqual([101, 0]);
     expect(q).toMatchObject({ limit: 100, offset: 0 });
+  });
+
+  it('selects only the requested columns', () => {
+    const q = buildSelectQuery(T, columns, { meta: 'x' }, ['dealer_id', 'month']);
+    expect(q.text).toMatch(
+      /^SELECT "dealer_id", "month" FROM "public"\."fct_dealer_month_activity_table" WHERE "meta" = \$1 /,
+    );
+  });
+
+  it('throws a server error when a selected column is missing', () => {
+    expect(() => buildSelectQuery(T, columns, {}, ['dealer_id', 'nope'])).toThrow(
+      'Columns not found in fct_dealer_month_activity_table: nope',
+    );
+    expect(() => buildSelectQuery(T, columns, {}, ['nope'])).not.toThrow(BadRequestError);
   });
 
   it('builds parameterised filters for every operator', () => {
@@ -59,6 +73,36 @@ describe('buildSelectQuery', () => {
   ])('rejects %j', (query, message) => {
     expect(() => buildSelectQuery(T, columns, query)).toThrow(BadRequestError);
     expect(() => buildSelectQuery(T, columns, query)).toThrow(message);
+  });
+});
+
+describe('buildDistinctCountsQuery', () => {
+  it('counts distinct values per alias, each narrowed by its own filters', () => {
+    const q = buildDistinctCountsQuery(
+      T,
+      columns,
+      { dealer_id: 'D1', limit: '5', sort: 'month' },
+      'dealer_id',
+      {
+        all: {},
+        october: { 'month.gte': '2024-10-01', 'month.lt': '2024-11-01' },
+      },
+    );
+    expect(q.text).toBe(
+      'SELECT COUNT(DISTINCT "dealer_id")::int AS "all", ' +
+        'COUNT(DISTINCT "dealer_id") FILTER (WHERE "month" >= $1 AND "month" < $2)::int AS "october" ' +
+        'FROM "public"."fct_dealer_month_activity_table" WHERE "dealer_id" = $3',
+    );
+    expect(q.values).toEqual(['2024-10-01', '2024-11-01', 'D1']);
+  });
+
+  it('rejects unknown filters and throws a server error for a missing column', () => {
+    expect(() =>
+      buildDistinctCountsQuery(T, columns, { nope: 'x' }, 'dealer_id', { n: {} }),
+    ).toThrow(BadRequestError);
+    expect(() => buildDistinctCountsQuery(T, columns, {}, 'nope', { n: {} })).toThrow(
+      'Columns not found in fct_dealer_month_activity_table: nope',
+    );
   });
 });
 
