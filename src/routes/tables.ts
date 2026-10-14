@@ -61,6 +61,17 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
     return rows[0]!;
   }
 
+  /** Distinct talukas whose taluka_potential is 'High' or 'Very High'. */
+  async function countHighPotentialTalukas(query: Record<string, unknown>): Promise<number> {
+    const { highPotentialTalukaCount } = await countDistinct(
+      'high-potential-taluka-month',
+      { ...query, 'taluka_potential.in': 'High,Very High' },
+      'taluka',
+      { highPotentialTalukaCount: {} },
+    );
+    return highPotentialTalukaCount;
+  }
+
   return async (app) => {
     for (const slug of TABLE_SLUGS) {
       const table = TABLES[slug];
@@ -87,14 +98,11 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
     // Returns { highPotentialTalukaCount }: distinct talukas whose taluka_potential is 'High' or
     // 'Very High'. NULL talukas are never counted. Column filters (e.g. state, zone,
     // transaction_date_secondary_sales_stock) work as on /high-potential-taluka-month.
-    app.get('/high-potential-taluka-month/high-potential-count', async (req) =>
-      countDistinct(
-        'high-potential-taluka-month',
-        { ...(req.query as Record<string, unknown>), 'taluka_potential.in': 'High,Very High' },
-        'taluka',
-        { highPotentialTalukaCount: {} },
+    app.get('/high-potential-taluka-month/high-potential-count', async (req) => ({
+      highPotentialTalukaCount: await countHighPotentialTalukas(
+        req.query as Record<string, unknown>,
       ),
-    );
+    }));
 
     app.get('/dealer-month-activity/current-month-invoiced', async (req) => {
       const { startOfMonth, startOfNextMonth } = currentMonthRange();
@@ -136,22 +144,33 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
       );
     });
 
-    // Returns { invoicedTalukaCount }: distinct talukas where is_high_potential is true AND
-    // invoice_date falls in the current month (so invoice_date is non-null). NULL talukas are
-    // never counted. Column filters work as on /dealer-month-activity.
+    // Returns two counts of distinct talukas (NULL talukas are never counted):
+    //   highPotentialTalukaCount: from /high-potential-taluka-month/high-potential-count, i.e.
+    //                             taluka_potential is 'High' or 'Very High'.
+    //   invoicedTalukaCount:      from dealer-month-activity, rows where is_high_potential is true
+    //                             AND invoice_date falls in the current month.
+    // Column filters work as on /dealer-month-activity. For highPotentialTalukaCount only the
+    // filters on columns that also exist in high-potential-taluka-month (e.g. district, taluka)
+    // are applied; the others are ignored for that count.
     app.get('/dealer-month-activity/high-potential', async (req) => {
       const { startOfMonth, startOfNextMonth } = currentMonthRange();
-      return countDistinct(
-        'dealer-month-activity',
-        { ...(req.query as Record<string, unknown>), is_high_potential: 'true' },
-        'taluka',
-        {
+      const query = req.query as Record<string, unknown>;
+      const talukaColumns = new Set(
+        (await schema.columnsFor('high-potential-taluka-month')).map((c) => c.name),
+      );
+      const talukaQuery = Object.fromEntries(
+        Object.entries(query).filter(([key]) => talukaColumns.has(key.split('.')[0]!)),
+      );
+      const [highPotentialTalukaCount, { invoicedTalukaCount }] = await Promise.all([
+        countHighPotentialTalukas(talukaQuery),
+        countDistinct('dealer-month-activity', { ...query, is_high_potential: 'true' }, 'taluka', {
           invoicedTalukaCount: {
             'invoice_date.gte': startOfMonth,
             'invoice_date.lt': startOfNextMonth,
           },
-        },
-      );
+        }),
+      ]);
+      return { highPotentialTalukaCount, invoicedTalukaCount };
     });
   };
 }

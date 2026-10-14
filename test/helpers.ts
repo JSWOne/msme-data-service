@@ -41,7 +41,11 @@ export function fakeDb(): FakeDb {
       db.calls.push({ text, values });
       if (text.includes('information_schema.columns')) {
         const rows = Object.values(TABLES).flatMap((table_name) =>
-          COLUMNS.map((c) => ({ table_name, ...c })),
+          COLUMNS.filter(
+            // The taluka table has no per-dealer flag, unlike the dealer table.
+            (c) =>
+              !(table_name === TABLES['high-potential-taluka-month'] && c.column_name === 'is_high_potential'),
+          ).map((c) => ({ table_name, ...c })),
         );
         return { rows } as never;
       }
