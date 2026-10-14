@@ -9,6 +9,7 @@ export const NEW_DEALER_COLUMNS = [
   'user_name',
   'account_id',
   'account_name',
+  'account_type',
   'is_new_dealer_this_month',
   'ordered_qty_mtd',
   'invoice_qty_mtd',
@@ -83,6 +84,18 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
       ),
     );
 
+    // Returns { highPotentialTalukaCount }: distinct talukas whose taluka_potential is 'High' or
+    // 'Very High'. NULL talukas are never counted. Column filters (e.g. state, zone,
+    // transaction_date_secondary_sales_stock) work as on /high-potential-taluka-month.
+    app.get('/high-potential-taluka-month/high-potential-count', async (req) =>
+      countDistinct(
+        'high-potential-taluka-month',
+        { ...(req.query as Record<string, unknown>), 'taluka_potential.in': 'High,Very High' },
+        'taluka',
+        { highPotentialTalukaCount: {} },
+      ),
+    );
+
     app.get('/dealer-month-activity/current-month-invoiced', async (req) => {
       const { startOfMonth, startOfNextMonth } = currentMonthRange();
       return listRows(
@@ -109,12 +122,23 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
       );
     });
 
-    // Returns two counts of distinct talukas:
-    //   highPotentialTalukaCount: rows where is_high_potential is true.
-    //   invoicedTalukaCount:      rows where is_high_potential is true AND invoice_date falls in
-    //                             the current month (so invoice_date is non-null).
-    // NULL talukas are never counted. Column filters work as on /dealer-month-activity and
-    // apply to both counts.
+    app.get('/dealer-month-activity/current-month-invoiced-retailers', async (req) => {
+      const { startOfMonth, startOfNextMonth } = currentMonthRange();
+      return listRows(
+        'dealer-month-activity',
+        {
+          ...(req.query as Record<string, unknown>),
+          'invoice_date.gte': startOfMonth,
+          'invoice_date.lt': startOfNextMonth,
+          'account_type.eq': 'Retailer',
+        },
+        NEW_DEALER_COLUMNS,
+      );
+    });
+
+    // Returns { invoicedTalukaCount }: distinct talukas where is_high_potential is true AND
+    // invoice_date falls in the current month (so invoice_date is non-null). NULL talukas are
+    // never counted. Column filters work as on /dealer-month-activity.
     app.get('/dealer-month-activity/high-potential', async (req) => {
       const { startOfMonth, startOfNextMonth } = currentMonthRange();
       return countDistinct(
@@ -122,7 +146,6 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
         { ...(req.query as Record<string, unknown>), is_high_potential: 'true' },
         'taluka',
         {
-          highPotentialTalukaCount: {},
           invoicedTalukaCount: {
             'invoice_date.gte': startOfMonth,
             'invoice_date.lt': startOfNextMonth,
