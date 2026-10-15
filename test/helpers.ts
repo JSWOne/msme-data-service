@@ -27,6 +27,9 @@ export const COLUMNS = [
   { column_name: 'taluka_potential', data_type: 'text' },
 ];
 
+// Dealer-level columns the taluka table does not have.
+const TALUKA_TABLE_EXCLUDED = new Set(['is_high_potential', 'invoice_date', 'ordered_date']);
+
 export interface FakeDb extends Db {
   calls: { text: string; values?: unknown[] }[];
   rows: Record<string, unknown>[];
@@ -42,9 +45,11 @@ export function fakeDb(): FakeDb {
       if (text.includes('information_schema.columns')) {
         const rows = Object.values(TABLES).flatMap((table_name) =>
           COLUMNS.filter(
-            // The taluka table has no per-dealer flag, unlike the dealer table.
             (c) =>
-              !(table_name === TABLES['high-potential-taluka-month'] && c.column_name === 'is_high_potential'),
+              !(
+                table_name === TABLES['high-potential-taluka-month'] &&
+                TALUKA_TABLE_EXCLUDED.has(c.column_name)
+              ),
           ).map((c) => ({ table_name, ...c })),
         );
         return { rows } as never;

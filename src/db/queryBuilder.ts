@@ -122,6 +122,65 @@ export function buildSelectQuery(
 }
 
 /**
+ * Like buildSelectQuery, but returns at most one row per distinct `entityColumn`: the one with the
+ * greatest `dateColumn`, ordered by that date descending (ties by entity). Rows where either
+ * column is NULL are skipped. Filters and paging work as in buildSelectQuery; `sort`/`order` are
+ * validated but have no effect, since the ordering is fixed.
+ */
+export function buildLatestPerEntityQuery(
+  table: string,
+  columns: readonly ColumnInfo[],
+  query: Record<string, unknown>,
+  entityColumn: string,
+  dateColumn: string,
+  select?: readonly string[],
+): SelectQuery {
+  const { params, limit, offset } = parseParams(query);
+
+  const columnNames = new Set(columns.map((c) => c.name));
+  for (const c of [entityColumn, dateColumn]) {
+    if (!columnNames.has(c)) throw new Error(`Columns not found in ${table}: ${c}`);
+  }
+  const projection = buildProjection(table, columnNames, select);
+
+  const values: unknown[] = [];
+  const bind = (v: unknown): string => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+  const entity = quoteIdent(entityColumn);
+  const date = quoteIdent(dateColumn);
+  const where = [
+    ...buildWhere(columnNames, params, bind),
+    `${entity} IS NOT NULL`,
+    `${date} IS NOT NULL`,
+  ];
+
+  // Tie-break on every other orderable column so which row wins is deterministic when one entity
+  // has several rows on its latest date.
+  const tieBreak = columns
+    .filter(
+      (c) =>
+        !NON_ORDERABLE_TYPES.has(c.dataType) && c.name !== entityColumn && c.name !== dateColumn,
+    )
+    .map((c) => `${quoteIdent(c.name)} ASC`);
+
+  const innerOrder = [`${entity} ASC`, `${date} DESC`, ...tieBreak].join(', ');
+  const inner = [
+    `SELECT DISTINCT ON (${entity}) * FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
+    `WHERE ${where.join(' AND ')}`,
+    `ORDER BY ${innerOrder}`,
+  ].join(' ');
+  const text = [
+    `SELECT ${projection} FROM (${inner}) AS "latest"`,
+    `ORDER BY ${date} DESC, ${entity} ASC`,
+    `LIMIT ${bind(limit + 1)} OFFSET ${bind(offset)}`,
+  ].join(' ');
+
+  return { text, values, limit, offset };
+}
+
+/**
  * Builds one row of `COUNT(DISTINCT <column>)` values over the rows matching the same filters as
  * buildSelectQuery, one count per entry in `counts` (keyed by its result alias). Each count
  * further narrows its rows with its own filters, written like query parameters (e.g.
