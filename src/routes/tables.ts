@@ -17,6 +17,7 @@ export const NEW_DEALER_COLUMNS = [
   'invoice_date',
   'l3m_avg_invoice_qty',
   'invoice_qty_target',
+  'is_high_potential',
   'taluka',
   'district',
 ] as const;
@@ -171,6 +172,25 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
         }),
       ]);
       return { highPotentialTalukaCount, invoicedTalukaCount };
+    });
+
+    //Returns all the accounts associated to the user from dealer-month-activity, 
+    // rows where is_high_potential is true,
+    // account_type = Retailer
+    // AND invoice_date falls in the current month. 
+    app.get('/dealer-month-activity/current-month-high-potential-invoiced-retailers', async (req) => {
+      const { startOfMonth, startOfNextMonth } = currentMonthRange();
+      return listRows(
+        'dealer-month-activity',
+        {
+          ...(req.query as Record<string, unknown>),
+          is_high_potential: 'true',
+          'invoice_date.gte': startOfMonth,
+          'invoice_date.lt': startOfNextMonth,
+          'account_type.eq': 'Retailer',
+        },
+        NEW_DEALER_COLUMNS,
+      );
     });
   };
 }
