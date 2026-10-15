@@ -1,7 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { Db } from '../db/pool';
-import { buildDistinctCountsQuery, buildSelectQuery } from '../db/queryBuilder';
-import type { SchemaCache } from '../db/schema';
+import {
+  buildDistinctCountsQuery,
+  buildLatestPerEntityQuery,
+  buildSelectQuery,
+  type SelectQuery,
+} from '../db/queryBuilder';
+import type { ColumnInfo, SchemaCache } from '../db/schema';
 import { DB_SCHEMA, TABLES, TABLE_SLUGS, type TableSlug } from '../tables';
 
 export const NEW_DEALER_COLUMNS = [
@@ -38,9 +43,15 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
     slug: TableSlug,
     query: Record<string, unknown>,
     select?: readonly string[],
+    build: (
+      table: string,
+      columns: ColumnInfo[],
+      query: Record<string, unknown>,
+      select?: readonly string[],
+    ) => SelectQuery = buildSelectQuery,
   ) {
     const columns = await schema.columnsFor(slug);
-    const q = buildSelectQuery(TABLES[slug], columns, query, select);
+    const q = build(TABLES[slug], columns, query, select);
     const { rows } = await db.query(q.text, q.values);
     const hasMore = rows.length > q.limit;
     const data = hasMore ? rows.slice(0, q.limit) : rows;
@@ -192,5 +203,19 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
         NEW_DEALER_COLUMNS,
       );
     });
+
+    // One row per account (account_id): its most recent invoice (greatest invoice_date), ordered
+    // by invoice_date descending. Accounts that were never invoiced are skipped. Returns
+    // NEW_DEALER_COLUMNS; column filters and paging work as on /dealer-month-activity, but
+    // sort/order are ignored.
+    app.get('/dealer-month-activity/latest-invoice-per-account', async (req) =>
+      listRows(
+        'dealer-month-activity',
+        req.query as Record<string, unknown>,
+        NEW_DEALER_COLUMNS,
+        (table, columns, query, select) =>
+          buildLatestPerEntityQuery(table, columns, query, 'account_id', 'invoice_date', select),
+      ),
+    );
   };
 }
