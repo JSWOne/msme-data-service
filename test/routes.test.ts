@@ -307,6 +307,38 @@ describe('table routes', () => {
     expect(res.statusCode).toBe(504);
   });
 
+  describe('GET /v1/dealer-month-activity/latest-invoice-per-account', () => {
+    const url = '/v1/dealer-month-activity/latest-invoice-per-account';
+
+    it('returns one latest-invoice row per account with pagination', async () => {
+      const db = fakeDb();
+      db.rows = [{ account_id: 'A1' }, { account_id: 'A2' }, { account_id: 'A3' }];
+      app = testApp(db);
+      const res = await app.inject({ url: `${url}?taluka=T1&limit=2`, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        data: [{ account_id: 'A1' }, { account_id: 'A2' }],
+        pagination: { limit: 2, offset: 0, count: 2, hasMore: true },
+      });
+      const call = db.calls.at(-1);
+      expect(call?.text.startsWith(`SELECT ${NEW_DEALER_COLUMNS.map((c) => `"${c}"`).join(', ')} FROM (SELECT DISTINCT ON ("account_id") * `)).toBe(true);
+      expect(call?.text).toContain('"taluka" = $1 AND "account_id" IS NOT NULL AND "invoice_date" IS NOT NULL');
+      expect(call?.text).toContain(') AS "latest" ORDER BY "invoice_date" DESC, "account_id" ASC LIMIT $2 OFFSET $3');
+      expect(call?.values).toEqual(['T1', 3, 0]);
+    });
+
+    it('returns 400 for an unknown filter column', async () => {
+      app = testApp();
+      const res = await app.inject({ url: `${url}?bogus=1`, headers: auth });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('requires an API key', async () => {
+      app = testApp();
+      expect((await app.inject({ url })).statusCode).toBe(401);
+    });
+  });
+
   describe('GET /v1/dealer-month-activity/current-month-invoiced-retailers', () => {
     const url = '/v1/dealer-month-activity/current-month-invoiced-retailers';
 
