@@ -257,6 +257,170 @@ describe('table routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('high-potential-count rejects an unknown filter column with 400', async () => {
+    app = testApp();
+    const res = await app.inject({
+      url: '/v1/high-potential-taluka-month/high-potential-count?bogus=1',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toMatch(/Unknown query parameter 'bogus'/);
+  });
+
+  it('high-potential forwards operator filters on shared columns to the taluka count', async () => {
+    const db = fakeDb();
+    db.rows = [{ highPotentialTalukaCount: 3, invoicedTalukaCount: 2 }];
+    app = testApp(db);
+    await app.inject({
+      url: '/v1/dealer-month-activity/high-potential?district.in=D1,D2&invoice_date.gte=2020-01-01',
+      headers: auth,
+    });
+    const dealerCall = db.calls.find((c) => c.text.includes('fct_dealer_month_activity_table'));
+    // Dealer-only columns (invoice_date) apply to the dealer count...
+    expect(dealerCall?.text).toContain('"district" = ANY($');
+    expect(dealerCall?.text).toContain('"invoice_date" >= $');
+    // ...but are dropped for the taluka count, while district.in is forwarded.
+    const talukaCall = db.calls.find((c) =>
+      c.text.includes('fct_high_potential_taluka_month_table'),
+    );
+    expect(talukaCall?.text).not.toContain('invoice_date');
+    expect(talukaCall?.values).toEqual([['D1', 'D2'], ['High', 'Very High']]);
+  });
+
+  it('high-potential rejects an unknown filter column with 400', async () => {
+    app = testApp();
+    const res = await app.inject({
+      url: '/v1/dealer-month-activity/high-potential?bogus=1',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('high-potential surfaces a DB failure instead of a partial result', async () => {
+    const db = fakeDb();
+    db.failWith = Object.assign(new Error('canceling statement'), { code: '57014' });
+    app = testApp(db);
+    const res = await app.inject({
+      url: '/v1/dealer-month-activity/high-potential',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(504);
+  });
+
+  describe('GET /v1/dealer-month-activity/latest-invoice-per-account', () => {
+    const url = '/v1/dealer-month-activity/latest-invoice-per-account';
+
+    it('returns one latest-invoice row per account with pagination', async () => {
+      const db = fakeDb();
+      db.rows = [{ account_id: 'A1' }, { account_id: 'A2' }, { account_id: 'A3' }];
+      app = testApp(db);
+      const res = await app.inject({ url: `${url}?taluka=T1&limit=2`, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        data: [{ account_id: 'A1' }, { account_id: 'A2' }],
+        pagination: { limit: 2, offset: 0, count: 2, hasMore: true },
+      });
+      const call = db.calls.at(-1);
+      expect(call?.text.startsWith(`SELECT ${NEW_DEALER_COLUMNS.map((c) => `"${c}"`).join(', ')} FROM (SELECT DISTINCT ON ("account_id") * `)).toBe(true);
+      expect(call?.text).toContain('"taluka" = $1 AND "account_id" IS NOT NULL AND "invoice_date" IS NOT NULL');
+      expect(call?.text).toContain(') AS "latest" ORDER BY "invoice_date" DESC, "account_id" ASC LIMIT $2 OFFSET $3');
+      expect(call?.values).toEqual(['T1', 3, 0]);
+    });
+
+    it('returns 400 for an unknown filter column', async () => {
+      app = testApp();
+      const res = await app.inject({ url: `${url}?bogus=1`, headers: auth });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('requires an API key', async () => {
+      app = testApp();
+      expect((await app.inject({ url })).statusCode).toBe(401);
+    });
+  });
+
+  describe('GET /v1/dealer-month-activity/current-month-invoiced-retailers', () => {
+    const url = '/v1/dealer-month-activity/current-month-invoiced-retailers';
+
+    it('filters to Retailer accounts invoiced this month', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 12));
+      const db = fakeDb();
+      db.rows = [{ user_id: 'U1' }];
+      app = testApp(db);
+      const res = await app.inject({ url: `${url}?taluka=T1&limit=10`, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        data: [{ user_id: 'U1' }],
+        pagination: { limit: 10, offset: 0, count: 1, hasMore: false },
+      });
+      const call = db.calls.at(-1);
+      expect(call?.text.startsWith(`${NEW_DEALER_SELECT} WHERE `)).toBe(true);
+      expect(call?.text).toContain(
+        '"taluka" = $1 AND "invoice_date" >= $2 AND "invoice_date" < $3 AND "account_type" = $4',
+      );
+      expect(call?.values?.slice(0, 4)).toEqual(['T1', '2026-10-01', '2026-11-01', 'Retailer']);
+    });
+
+    it('requires an API key', async () => {
+      app = testApp();
+      expect((await app.inject({ url })).statusCode).toBe(401);
+    });
+  });
+
+  describe('GET /v1/dealer-month-activity/current-month-high-potential-invoiced-retailers', () => {
+    const url = '/v1/dealer-month-activity/current-month-high-potential-invoiced-retailers';
+
+    it('filters to high-potential Retailer accounts invoiced this month', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 12));
+      const db = fakeDb();
+      db.rows = [{ user_id: 'U1' }];
+      app = testApp(db);
+      const res = await app.inject({ url: `${url}?taluka=T1&limit=10`, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        data: [{ user_id: 'U1' }],
+        pagination: { limit: 10, offset: 0, count: 1, hasMore: false },
+      });
+      const call = db.calls.at(-1);
+      expect(call?.text.startsWith(`${NEW_DEALER_SELECT} WHERE `)).toBe(true);
+      expect(call?.text).toContain(
+        '"taluka" = $1 AND "is_high_potential" = $2 AND "invoice_date" >= $3 AND "invoice_date" < $4 AND "account_type" = $5',
+      );
+      expect(call?.values?.slice(0, 5)).toEqual([
+        'T1',
+        'true',
+        '2026-10-01',
+        '2026-11-01',
+        'Retailer',
+      ]);
+    });
+
+    it('ignores a caller-supplied is_high_potential and invoice_date range', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 11, 31, 23, 0));
+      const db = fakeDb();
+      app = testApp(db);
+      await app.inject({
+        url: `${url}?is_high_potential=false&invoice_date.gte=2020-01-01`,
+        headers: auth,
+      });
+      // December rolls over into January of the next year.
+      expect(db.calls.at(-1)?.values?.slice(0, 4)).toEqual([
+        'true',
+        '2026-12-01',
+        '2027-01-01',
+        'Retailer',
+      ]);
+    });
+
+    it('requires an API key', async () => {
+      app = testApp();
+      expect((await app.inject({ url })).statusCode).toBe(401);
+    });
+  });
+
   describe.each([
     ['current-month-invoiced', 'invoice_date'],
     ['current-month-ordered', 'ordered_date'],
