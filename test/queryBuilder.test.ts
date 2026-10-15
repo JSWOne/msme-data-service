@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildDistinctCountsQuery, buildSelectQuery, quoteIdent } from '../src/db/queryBuilder';
+import {
+  buildDistinctCountsQuery,
+  buildLatestPerEntityQuery,
+  buildSelectQuery,
+  quoteIdent,
+} from '../src/db/queryBuilder';
 import { BadRequestError } from '../src/errors';
 
 const columns = [
@@ -103,6 +108,53 @@ describe('buildDistinctCountsQuery', () => {
     expect(() => buildDistinctCountsQuery(T, columns, {}, 'nope', { n: {} })).toThrow(
       'Columns not found in fct_dealer_month_activity_table: nope',
     );
+  });
+});
+
+describe('buildLatestPerEntityQuery', () => {
+  const cols = [
+    { name: 'account_id', dataType: 'text' },
+    { name: 'invoice_date', dataType: 'date' },
+    { name: 'taluka', dataType: 'text' },
+    { name: 'meta', dataType: 'json' },
+  ];
+  const build = (query: Record<string, unknown> = {}, select?: readonly string[]) =>
+    buildLatestPerEntityQuery(T, cols, query, 'account_id', 'invoice_date', select);
+
+  it('keeps the latest row per account, ordered by invoice_date descending', () => {
+    const q = build();
+    expect(q.text).toBe(
+      'SELECT * FROM (SELECT DISTINCT ON ("account_id") * FROM "public"."fct_dealer_month_activity_table" ' +
+        'WHERE "account_id" IS NOT NULL AND "invoice_date" IS NOT NULL ' +
+        'ORDER BY "account_id" ASC, "invoice_date" DESC, "taluka" ASC) AS "latest" ' +
+        'ORDER BY "invoice_date" DESC, "account_id" ASC LIMIT $1 OFFSET $2',
+    );
+    expect(q.values).toEqual([101, 0]);
+    expect(q).toMatchObject({ limit: 100, offset: 0 });
+  });
+
+  it('applies filters inside the per-account selection, before paging', () => {
+    const q = build({ taluka: 'T1', limit: '5', offset: '10' }, ['account_id', 'invoice_date']);
+    expect(q.text).toContain('SELECT "account_id", "invoice_date" FROM (SELECT DISTINCT ON');
+    expect(q.text).toContain('WHERE "taluka" = $1 AND "account_id" IS NOT NULL');
+    expect(q.values).toEqual(['T1', 6, 10]);
+  });
+
+  it('ignores sort and order', () => {
+    expect(build({ sort: 'taluka', order: 'desc' }).text).toBe(build().text);
+  });
+
+  it('rejects an unknown filter column with a BadRequestError', () => {
+    expect(() => build({ bogus: '1' })).toThrow(BadRequestError);
+  });
+
+  it('throws (not a 400) when the entity or date column is missing from the table', () => {
+    expect(() =>
+      buildLatestPerEntityQuery(T, cols, {}, 'nope', 'invoice_date'),
+    ).toThrow(/Columns not found/);
+    expect(() =>
+      buildLatestPerEntityQuery(T, cols, {}, 'account_id', 'nope'),
+    ).toThrow(/Columns not found/);
   });
 });
 

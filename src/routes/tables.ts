@@ -1,7 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { Db } from '../db/pool';
-import { buildDistinctCountsQuery, buildSelectQuery } from '../db/queryBuilder';
-import type { SchemaCache } from '../db/schema';
+import {
+  buildDistinctCountsQuery,
+  buildLatestPerEntityQuery,
+  buildSelectQuery,
+  type SelectQuery,
+} from '../db/queryBuilder';
+import type { ColumnInfo, SchemaCache } from '../db/schema';
 import { DB_SCHEMA, TABLES, TABLE_SLUGS, type TableSlug } from '../tables';
 
 export const NEW_DEALER_COLUMNS = [
@@ -17,6 +22,7 @@ export const NEW_DEALER_COLUMNS = [
   'invoice_date',
   'l3m_avg_invoice_qty',
   'invoice_qty_target',
+  'is_high_potential',
   'taluka',
   'district',
 ] as const;
@@ -37,9 +43,15 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
     slug: TableSlug,
     query: Record<string, unknown>,
     select?: readonly string[],
+    build: (
+      table: string,
+      columns: ColumnInfo[],
+      query: Record<string, unknown>,
+      select?: readonly string[],
+    ) => SelectQuery = buildSelectQuery,
   ) {
     const columns = await schema.columnsFor(slug);
-    const q = buildSelectQuery(TABLES[slug], columns, query, select);
+    const q = build(TABLES[slug], columns, query, select);
     const { rows } = await db.query(q.text, q.values);
     const hasMore = rows.length > q.limit;
     const data = hasMore ? rows.slice(0, q.limit) : rows;
@@ -172,5 +184,38 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
       ]);
       return { highPotentialTalukaCount, invoicedTalukaCount };
     });
+
+    //Returns all the accounts associated to the user from dealer-month-activity, 
+    // rows where is_high_potential is true,
+    // account_type = Retailer
+    // AND invoice_date falls in the current month. 
+    app.get('/dealer-month-activity/current-month-high-potential-invoiced-retailers', async (req) => {
+      const { startOfMonth, startOfNextMonth } = currentMonthRange();
+      return listRows(
+        'dealer-month-activity',
+        {
+          ...(req.query as Record<string, unknown>),
+          is_high_potential: 'true',
+          'invoice_date.gte': startOfMonth,
+          'invoice_date.lt': startOfNextMonth,
+          'account_type.eq': 'Retailer',
+        },
+        NEW_DEALER_COLUMNS,
+      );
+    });
+
+    // One row per account (account_id): its most recent invoice (greatest invoice_date), ordered
+    // by invoice_date descending. Accounts that were never invoiced are skipped. Returns
+    // NEW_DEALER_COLUMNS; column filters and paging work as on /dealer-month-activity, but
+    // sort/order are ignored.
+    app.get('/dealer-month-activity/latest-invoice-per-account', async (req) =>
+      listRows(
+        'dealer-month-activity',
+        req.query as Record<string, unknown>,
+        NEW_DEALER_COLUMNS,
+        (table, columns, query, select) =>
+          buildLatestPerEntityQuery(table, columns, query, 'account_id', 'invoice_date', select),
+      ),
+    );
   };
 }
