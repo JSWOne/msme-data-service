@@ -204,6 +204,46 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
       );
     });
 
+    // Returns { distinctAccountCount, distinctTalukaCount }: the number of distinct account_id /
+    // taluka among dealer-month-activity rows where is_high_potential is true, account_type =
+    // Retailer AND invoice_date does not fall in the current month. Rows with no invoice_date
+    // (not invoiced yet) count as not in the current month. NULLs are not counted. Column filters
+    // work as on /dealer-month-activity; paging and sorting have no effect.
+    app.get(
+      '/dealer-month-activity/current-month-high-potential-not-invoiced-retailers',
+      async (req) => {
+        const { startOfMonth, startOfNextMonth } = currentMonthRange();
+        const query = {
+          ...(req.query as Record<string, unknown>),
+          is_high_potential: 'true',
+          'account_type.eq': 'Retailer',
+        };
+        const outsideRange = {
+          column: 'invoice_date',
+          gte: startOfMonth,
+          lt: startOfNextMonth,
+        };
+        const columns = await schema.columnsFor('dealer-month-activity');
+        const countDistinctOf = async (column: string): Promise<number> => {
+          const q = buildDistinctCountsQuery(
+            TABLES['dealer-month-activity'],
+            columns,
+            query,
+            column,
+            { n: {} },
+            outsideRange,
+          );
+          const { rows } = await db.query<{ n: number }>(q.text, q.values);
+          return rows[0]!.n;
+        };
+        const [distinctAccountCount, distinctTalukaCount] = await Promise.all([
+          countDistinctOf('account_id'),
+          countDistinctOf('taluka'),
+        ]);
+        return { distinctAccountCount, distinctTalukaCount };
+      },
+    );
+
     // One row per account (account_id): its most recent invoice (greatest invoice_date), ordered
     // by invoice_date descending. Accounts that were never invoiced are skipped. Returns
     // NEW_DEALER_COLUMNS; column filters and paging work as on /dealer-month-activity, but
