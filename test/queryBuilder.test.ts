@@ -111,6 +111,37 @@ describe('buildDistinctCountsQuery', () => {
   });
 });
 
+describe('buildSelectQuery outsideRange', () => {
+  const cols = [
+    { name: 'invoice_date', dataType: 'date' },
+    { name: 'taluka', dataType: 'text' },
+  ];
+  const range = { column: 'invoice_date', gte: '2026-10-01', lt: '2026-11-01' };
+
+  it('keeps NULL or out-of-range rows, ANDed with the other filters', () => {
+    const q = buildSelectQuery(T, cols, { taluka: 'T1' }, undefined, range);
+    expect(q.text).toContain(
+      'WHERE "taluka" = $1 AND ("invoice_date" IS NULL OR "invoice_date" < $2 OR "invoice_date" >= $3)',
+    );
+    expect(q.values.slice(0, 3)).toEqual(['T1', '2026-10-01', '2026-11-01']);
+  });
+
+  it('throws (not a 400) when the column is missing from the table', () => {
+    expect(() =>
+      buildSelectQuery(T, cols, {}, undefined, { ...range, column: 'nope' }),
+    ).toThrow(/Columns not found/);
+  });
+
+  it('applies to buildDistinctCountsQuery too, after the other filters', () => {
+    const q = buildDistinctCountsQuery(T, cols, { taluka: 'T1' }, 'taluka', { n: {} }, range);
+    expect(q.text).toBe(
+      'SELECT COUNT(DISTINCT "taluka")::int AS "n" FROM "public"."fct_dealer_month_activity_table" ' +
+        'WHERE "taluka" = $1 AND ("invoice_date" IS NULL OR "invoice_date" < $2 OR "invoice_date" >= $3)',
+    );
+    expect(q.values).toEqual(['T1', '2026-10-01', '2026-11-01']);
+  });
+});
+
 describe('buildLatestPerEntityQuery', () => {
   const cols = [
     { name: 'account_id', dataType: 'text' },

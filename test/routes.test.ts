@@ -307,6 +307,59 @@ describe('table routes', () => {
     expect(res.statusCode).toBe(504);
   });
 
+  describe('GET /v1/dealer-month-activity/current-month-high-potential-not-invoiced-retailers', () => {
+    const url = '/v1/dealer-month-activity/current-month-high-potential-not-invoiced-retailers';
+
+    it('returns only the distinct account and taluka counts', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 12));
+      const db = fakeDb();
+      db.rows = [{ n: 7 }];
+      app = testApp(db);
+      const res = await app.inject({ url: `${url}?taluka=T1`, headers: auth });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ distinctAccountCount: 7, distinctTalukaCount: 7 });
+      // No list query: only the two count queries run (after the schema load).
+      expect(db.calls.filter((c) => c.text.startsWith('SELECT *'))).toHaveLength(0);
+      expect(db.calls.filter((c) => c.text.includes('COUNT(DISTINCT'))).toHaveLength(2);
+      for (const column of ['account_id', 'taluka']) {
+        const countCall = db.calls.find((c) =>
+          c.text.startsWith(`SELECT COUNT(DISTINCT "${column}")`),
+        );
+        expect(countCall?.text).toBe(
+          `SELECT COUNT(DISTINCT "${column}")::int AS "n" ` +
+            'FROM "public"."fct_dealer_month_activity_table" ' +
+            'WHERE "taluka" = $1 AND "is_high_potential" = $2 AND "account_type" = $3 AND ' +
+            '("invoice_date" IS NULL OR "invoice_date" < $4 OR "invoice_date" >= $5)',
+        );
+        expect(countCall?.values).toEqual(['T1', 'true', 'Retailer', '2026-10-01', '2026-11-01']);
+      }
+    });
+
+    it('ignores a caller-supplied is_high_potential', async () => {
+      const db = fakeDb();
+      app = testApp(db);
+      await app.inject({ url: `${url}?is_high_potential=false`, headers: auth });
+      for (const call of db.calls.filter((c) => c.text.includes('is_high_potential'))) {
+        expect(call.values?.[0]).toBe('true');
+      }
+    });
+
+    it('rolls December over into January of the next year', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 11, 31, 23, 0));
+      const db = fakeDb();
+      app = testApp(db);
+      await app.inject({ url, headers: auth });
+      expect(db.calls.at(-1)?.values?.slice(2, 4)).toEqual(['2026-12-01', '2027-01-01']);
+    });
+
+    it('requires an API key', async () => {
+      app = testApp();
+      expect((await app.inject({ url })).statusCode).toBe(401);
+    });
+  });
+
   describe('GET /v1/dealer-month-activity/latest-invoice-per-account', () => {
     const url = '/v1/dealer-month-activity/latest-invoice-per-account';
 

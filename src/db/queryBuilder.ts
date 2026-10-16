@@ -77,12 +77,15 @@ function buildProjection(
  * whitelist (and are quoted); every user-supplied value is a bind parameter.
  * Fetches limit+1 rows so the caller can compute hasMore without a COUNT(*).
  * `select` limits the returned columns (default: all); filtering and sorting still see every column.
+ * `outsideRange` keeps only rows whose `column` is NULL or falls outside [gte, lt); it is ANDed
+ * with the query-parameter filters.
  */
 export function buildSelectQuery(
   table: string,
   columns: readonly ColumnInfo[],
   query: Record<string, unknown>,
   select?: readonly string[],
+  outsideRange?: OutsideRange,
 ): SelectQuery {
   const { params, limit, offset, sort, order } = parseParams(query);
 
@@ -95,6 +98,7 @@ export function buildSelectQuery(
     return `$${values.length}`;
   };
   const where = buildWhere(columnNames, params, bind);
+  if (outsideRange) where.push(outsideRangeCondition(table, columnNames, outsideRange, bind));
 
   const orderable = columns.filter((c) => !NON_ORDERABLE_TYPES.has(c.dataType));
   if (sort !== undefined && !orderable.some((c) => c.name === sort)) {
@@ -185,7 +189,8 @@ export function buildLatestPerEntityQuery(
  * buildSelectQuery, one count per entry in `counts` (keyed by its result alias). Each count
  * further narrows its rows with its own filters, written like query parameters (e.g.
  * `{ 'invoice_date.gte': '2026-10-01' }`). NULL values of `column` are never counted.
- * Paging and sorting parameters are validated but have no effect.
+ * Paging and sorting parameters are validated but have no effect. `outsideRange` narrows all
+ * counts as in buildSelectQuery.
  */
 export function buildDistinctCountsQuery(
   table: string,
@@ -193,6 +198,7 @@ export function buildDistinctCountsQuery(
   query: Record<string, unknown>,
   column: string,
   counts: Record<string, Record<string, string>>,
+  outsideRange?: OutsideRange,
 ): { text: string; values: unknown[] } {
   const { params } = parseParams(query);
 
@@ -213,6 +219,7 @@ export function buildDistinctCountsQuery(
     return `COUNT(DISTINCT ${col})${filter}::int AS ${quoteIdent(alias)}`;
   });
   const where = buildWhere(columnNames, params, bind);
+  if (outsideRange) where.push(outsideRangeCondition(table, columnNames, outsideRange, bind));
 
   const text = [
     `SELECT ${projection.join(', ')} FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
@@ -222,6 +229,28 @@ export function buildDistinctCountsQuery(
     .join(' ');
 
   return { text, values };
+}
+
+/** Matches rows whose `column` is NULL or falls outside [gte, lt). */
+export interface OutsideRange {
+  column: string;
+  gte: string;
+  lt: string;
+}
+
+function outsideRangeCondition(
+  table: string,
+  columnNames: Set<string>,
+  range: OutsideRange,
+  bind: (v: unknown) => string,
+): string {
+  if (!columnNames.has(range.column)) {
+    throw new Error(`Columns not found in ${table}: ${range.column}`);
+  }
+  const col = quoteIdent(range.column);
+  const lo = bind(range.gte);
+  const hi = bind(range.lt);
+  return `(${col} IS NULL OR ${col} < ${lo} OR ${col} >= ${hi})`;
 }
 
 function parseParams(query: Record<string, unknown>) {
