@@ -84,6 +84,34 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
     return highPotentialTalukaCount;
   }
 
+  /**
+   * Distinct account_id / taluka among dealer-month-activity rows where is_high_potential is
+   * true, account_type = Retailer AND invoice_date is NULL or outside the current month.
+   */
+  async function countNotInvoicedHighPotentialRetailers(query: Record<string, unknown>) {
+    const { startOfMonth, startOfNextMonth } = currentMonthRange();
+    const filters = { ...query, is_high_potential: 'true', 'account_type.eq': 'Retailer' };
+    const outsideRange = { column: 'invoice_date', gte: startOfMonth, lt: startOfNextMonth };
+    const columns = await schema.columnsFor('dealer-month-activity');
+    const countDistinctOf = async (column: string): Promise<number> => {
+      const q = buildDistinctCountsQuery(
+        TABLES['dealer-month-activity'],
+        columns,
+        filters,
+        column,
+        { n: {} },
+        outsideRange,
+      );
+      const { rows } = await db.query<{ n: number }>(q.text, q.values);
+      return rows[0]!.n;
+    };
+    const [distinctNotInvoicedAccountCount, distinctNotInvoicedTalukaCount] = await Promise.all([
+      countDistinctOf('account_id'),
+      countDistinctOf('taluka'),
+    ]);
+    return { distinctNotInvoicedAccountCount, distinctNotInvoicedTalukaCount };
+  }
+
   return async (app) => {
     for (const slug of TABLE_SLUGS) {
       const table = TABLES[slug];
@@ -156,11 +184,16 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
       );
     });
 
-    // Returns two counts of distinct talukas (NULL talukas are never counted):
-    //   highPotentialTalukaCount: from /high-potential-taluka-month/high-potential-count, i.e.
-    //                             taluka_potential is 'High' or 'Very High'.
-    //   invoicedTalukaCount:      from dealer-month-activity, rows where is_high_potential is true
-    //                             AND invoice_date falls in the current month.
+    // Returns (NULLs are never counted):
+    //   highPotentialTalukaCount: distinct talukas from /high-potential-taluka-month/
+    //                             high-potential-count, i.e. taluka_potential is 'High' or
+    //                             'Very High'.
+    //   invoicedTalukaCount:      distinct talukas from dealer-month-activity, rows where
+    //                             is_high_potential is true AND invoice_date falls in the
+    //                             current month.
+    //   distinctNotInvoicedAccountCount, distinctNotInvoicedTalukaCount: distinct account_id /
+    //                             taluka of Retailers with is_high_potential whose invoice_date
+    //                             is NULL or not in the current month.
     // Column filters work as on /dealer-month-activity. For highPotentialTalukaCount only the
     // filters on columns that also exist in high-potential-taluka-month (e.g. district, taluka)
     // are applied; the others are ignored for that count.
@@ -173,7 +206,7 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
       const talukaQuery = Object.fromEntries(
         Object.entries(query).filter(([key]) => talukaColumns.has(key.split('.')[0]!)),
       );
-      const [highPotentialTalukaCount, { invoicedTalukaCount }] = await Promise.all([
+      const [highPotentialTalukaCount, { invoicedTalukaCount }, notInvoiced] = await Promise.all([
         countHighPotentialTalukas(talukaQuery),
         countDistinct('dealer-month-activity', { ...query, is_high_potential: 'true' }, 'taluka', {
           invoicedTalukaCount: {
@@ -181,8 +214,9 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
             'invoice_date.lt': startOfNextMonth,
           },
         }),
+        countNotInvoicedHighPotentialRetailers(query),
       ]);
-      return { highPotentialTalukaCount, invoicedTalukaCount };
+      return { highPotentialTalukaCount, invoicedTalukaCount, ...notInvoiced };
     });
 
     //Returns all the accounts associated to the user from dealer-month-activity, 
@@ -203,46 +237,6 @@ export function tableRoutes(db: Db, schema: SchemaCache): FastifyPluginAsync {
         NEW_DEALER_COLUMNS,
       );
     });
-
-    // Returns { distinctAccountCount, distinctTalukaCount }: the number of distinct account_id /
-    // taluka among dealer-month-activity rows where is_high_potential is true, account_type =
-    // Retailer AND invoice_date does not fall in the current month. Rows with no invoice_date
-    // (not invoiced yet) count as not in the current month. NULLs are not counted. Column filters
-    // work as on /dealer-month-activity; paging and sorting have no effect.
-    app.get(
-      '/dealer-month-activity/current-month-high-potential-not-invoiced-retailers',
-      async (req) => {
-        const { startOfMonth, startOfNextMonth } = currentMonthRange();
-        const query = {
-          ...(req.query as Record<string, unknown>),
-          is_high_potential: 'true',
-          'account_type.eq': 'Retailer',
-        };
-        const outsideRange = {
-          column: 'invoice_date',
-          gte: startOfMonth,
-          lt: startOfNextMonth,
-        };
-        const columns = await schema.columnsFor('dealer-month-activity');
-        const countDistinctOf = async (column: string): Promise<number> => {
-          const q = buildDistinctCountsQuery(
-            TABLES['dealer-month-activity'],
-            columns,
-            query,
-            column,
-            { n: {} },
-            outsideRange,
-          );
-          const { rows } = await db.query<{ n: number }>(q.text, q.values);
-          return rows[0]!.n;
-        };
-        const [distinctAccountCount, distinctTalukaCount] = await Promise.all([
-          countDistinctOf('account_id'),
-          countDistinctOf('taluka'),
-        ]);
-        return { distinctAccountCount, distinctTalukaCount };
-      },
-    );
 
     // One row per account (account_id): its most recent invoice (greatest invoice_date), ordered
     // by invoice_date descending. Accounts that were never invoiced are skipped. Returns
