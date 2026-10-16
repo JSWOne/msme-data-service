@@ -77,15 +77,12 @@ function buildProjection(
  * whitelist (and are quoted); every user-supplied value is a bind parameter.
  * Fetches limit+1 rows so the caller can compute hasMore without a COUNT(*).
  * `select` limits the returned columns (default: all); filtering and sorting still see every column.
- * `outsideRange` keeps only rows whose `column` is NULL or falls outside [gte, lt); it is ANDed
- * with the query-parameter filters.
  */
 export function buildSelectQuery(
   table: string,
   columns: readonly ColumnInfo[],
   query: Record<string, unknown>,
   select?: readonly string[],
-  outsideRange?: OutsideRange,
 ): SelectQuery {
   const { params, limit, offset, sort, order } = parseParams(query);
 
@@ -98,7 +95,6 @@ export function buildSelectQuery(
     return `$${values.length}`;
   };
   const where = buildWhere(columnNames, params, bind);
-  if (outsideRange) where.push(outsideRangeCondition(table, columnNames, outsideRange, bind));
 
   const orderable = columns.filter((c) => !NON_ORDERABLE_TYPES.has(c.dataType));
   if (sort !== undefined && !orderable.some((c) => c.name === sort)) {
