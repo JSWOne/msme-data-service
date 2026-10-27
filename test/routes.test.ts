@@ -124,20 +124,38 @@ describe('table routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('GET /v1/dealer-month-activity/high-potential returns both taluka counts', async () => {
+  it('GET /v1/dealer-month-activity/high-potential returns all the counts', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 11, 15));
     const db = fakeDb();
-    db.rows = [{ highPotentialTalukaCount: 42, invoicedTalukaCount: 30 }];
+    db.rows = [{ highPotentialTalukaCount: 42, invoicedTalukaCount: 30, n: 5 }];
     app = testApp(db);
     const res = await app.inject({
       url: '/v1/dealer-month-activity/high-potential?is_high_potential=false&district=D1',
       headers: auth,
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ highPotentialTalukaCount: 42, invoicedTalukaCount: 30 });
+    expect(res.json()).toEqual({
+      highPotentialTalukaCount: 42,
+      invoicedTalukaCount: 30,
+      distinctNotInvoicedAccountCount: 5,
+      distinctNotInvoicedTalukaCount: 5,
+    });
 
-    const dealerCall = db.calls.find((c) => c.text.includes('fct_dealer_month_activity_table'));
+    // Not-invoiced Retailer counts: is_high_potential is forced, the caller's value is ignored,
+    // and December rolls over into January of the next year.
+    for (const column of ['account_id', 'taluka']) {
+      const call = db.calls.find((c) => c.text.startsWith(`SELECT COUNT(DISTINCT "${column}")::int AS "n"`));
+      expect(call?.text).toBe(
+        `SELECT COUNT(DISTINCT "${column}")::int AS "n" ` +
+          'FROM "public"."fct_dealer_month_activity_table" ' +
+          'WHERE "is_high_potential" = $1 AND "district" = $2 AND "account_type" = $3 AND ' +
+          '("invoice_date" IS NULL OR "invoice_date" < $4 OR "invoice_date" >= $5)',
+      );
+      expect(call?.values).toEqual(['true', 'D1', 'Retailer', '2026-12-01', '2027-01-01']);
+    }
+
+    const dealerCall = db.calls.find((c) => c.text.includes('"invoicedTalukaCount"'));
     expect(dealerCall?.text).toBe(
       'SELECT COUNT(DISTINCT "taluka") FILTER (WHERE "invoice_date" >= $1 AND "invoice_date" < $2)::int AS "invoicedTalukaCount" ' +
         'FROM "public"."fct_dealer_month_activity_table" WHERE "is_high_potential" = $3 AND "district" = $4',
@@ -162,14 +180,19 @@ describe('table routes', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 9, 12));
     const db = fakeDb();
-    db.rows = [{ highPotentialTalukaCount: 1, invoicedTalukaCount: 0 }];
+    db.rows = [{ highPotentialTalukaCount: 1, invoicedTalukaCount: 0, n: 2 }];
     app = testApp(db);
     const res = await app.inject({
       url: '/v1/dealer-month-activity/high-potential',
       headers: auth,
     });
-    expect(res.json()).toEqual({ highPotentialTalukaCount: 1, invoicedTalukaCount: 0 });
-    const dealerCall = db.calls.find((c) => c.text.includes('fct_dealer_month_activity_table'));
+    expect(res.json()).toEqual({
+      highPotentialTalukaCount: 1,
+      invoicedTalukaCount: 0,
+      distinctNotInvoicedAccountCount: 2,
+      distinctNotInvoicedTalukaCount: 2,
+    });
+    const dealerCall = db.calls.find((c) => c.text.includes('"invoicedTalukaCount"'));
     expect(dealerCall?.values).toEqual(['2026-10-01', '2026-11-01', 'true']);
     const talukaCall = db.calls.find((c) =>
       c.text.includes('fct_high_potential_taluka_month_table'),
@@ -305,6 +328,15 @@ describe('table routes', () => {
       headers: auth,
     });
     expect(res.statusCode).toBe(504);
+  });
+
+  it('high-potential-not-invoiced-retailers endpoint was merged into high-potential', async () => {
+    app = testApp();
+    const res = await app.inject({
+      url: '/v1/dealer-month-activity/current-month-high-potential-not-invoiced-retailers',
+      headers: auth,
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   describe('GET /v1/dealer-month-activity/latest-invoice-per-account', () => {

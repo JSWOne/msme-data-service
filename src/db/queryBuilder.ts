@@ -185,7 +185,8 @@ export function buildLatestPerEntityQuery(
  * buildSelectQuery, one count per entry in `counts` (keyed by its result alias). Each count
  * further narrows its rows with its own filters, written like query parameters (e.g.
  * `{ 'invoice_date.gte': '2026-10-01' }`). NULL values of `column` are never counted.
- * Paging and sorting parameters are validated but have no effect.
+ * Paging and sorting parameters are validated but have no effect. `outsideRange` narrows all
+ * counts as in buildSelectQuery.
  */
 export function buildDistinctCountsQuery(
   table: string,
@@ -193,6 +194,7 @@ export function buildDistinctCountsQuery(
   query: Record<string, unknown>,
   column: string,
   counts: Record<string, Record<string, string>>,
+  outsideRange?: OutsideRange,
 ): { text: string; values: unknown[] } {
   const { params } = parseParams(query);
 
@@ -213,6 +215,7 @@ export function buildDistinctCountsQuery(
     return `COUNT(DISTINCT ${col})${filter}::int AS ${quoteIdent(alias)}`;
   });
   const where = buildWhere(columnNames, params, bind);
+  if (outsideRange) where.push(outsideRangeCondition(table, columnNames, outsideRange, bind));
 
   const text = [
     `SELECT ${projection.join(', ')} FROM ${quoteIdent(DB_SCHEMA)}.${quoteIdent(table)}`,
@@ -222,6 +225,28 @@ export function buildDistinctCountsQuery(
     .join(' ');
 
   return { text, values };
+}
+
+/** Matches rows whose `column` is NULL or falls outside [gte, lt). */
+export interface OutsideRange {
+  column: string;
+  gte: string;
+  lt: string;
+}
+
+function outsideRangeCondition(
+  table: string,
+  columnNames: Set<string>,
+  range: OutsideRange,
+  bind: (v: unknown) => string,
+): string {
+  if (!columnNames.has(range.column)) {
+    throw new Error(`Columns not found in ${table}: ${range.column}`);
+  }
+  const col = quoteIdent(range.column);
+  const lo = bind(range.gte);
+  const hi = bind(range.lt);
+  return `(${col} IS NULL OR ${col} < ${lo} OR ${col} >= ${hi})`;
 }
 
 function parseParams(query: Record<string, unknown>) {
