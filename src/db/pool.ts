@@ -28,7 +28,7 @@ export function createPool(config: Config): pg.Pool {
     statement_timeout: config.STATEMENT_TIMEOUT_MS,
     application_name: 'msme-data-service',
     // Cloud SQL Auth Proxy handles encryption to Cloud SQL.
-    ssl: false,
+    ssl: config.SSL_PERMISSION,
     // Defence in depth on top of the read-only DB user.
     options: '-c default_transaction_read_only=on',
   });
