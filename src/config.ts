@@ -1,5 +1,24 @@
 import { z } from 'zod';
 
+export type SslOption = boolean | { rejectUnauthorized: boolean };
+
+/**
+ * Parses SSL_PERMISSION, an env var, into pg's `ssl` option. Accepts `false` (default, also when
+ * unset or empty), `true`, or `{ rejectUnauthorized: false|true }` (JS-object style, not JSON).
+ */
+function parseSsl(raw: string, ctx: z.RefinementCtx): SslOption {
+  const v = raw.trim();
+  if (v === '' || v === 'false') return false;
+  if (v === 'true') return true;
+  const m = /^\{\s*rejectUnauthorized\s*:\s*(true|false)\s*\}$/.exec(v);
+  if (m) return { rejectUnauthorized: m[1] === 'true' };
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: "must be 'true', 'false' or '{ rejectUnauthorized: true|false }'",
+  });
+  return z.NEVER;
+}
+
 const configSchema = z
   .object({
     APP_ENV: z.enum(['local', 'qa', 'preprod', 'prod']).default('local'),
@@ -22,6 +41,8 @@ const configSchema = z
     DB_NAME: z.string().min(1),
     DB_USER: z.string().min(1),
     DB_PASSWORD: z.string().min(1),
+    // TLS for the DB connection (pg `ssl` option). The Cloud SQL Auth Proxy unix socket needs none.
+    SSL_PERMISSION: z.string().default('').transform(parseSsl),
 
     POOL_MAX: z.coerce.number().int().min(1).max(50).default(5),
     STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).default(10_000),

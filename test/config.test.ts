@@ -31,6 +31,20 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, BASE_PATH: 'msme-data-service' })).toThrow(/BASE_PATH/);
   });
 
+  it('parses SSL_PERMISSION into the pg ssl option', () => {
+    expect(loadConfig(base).SSL_PERMISSION).toBe(false);
+    expect(loadConfig({ ...base, SSL_PERMISSION: '' }).SSL_PERMISSION).toBe(false);
+    expect(loadConfig({ ...base, SSL_PERMISSION: 'false' }).SSL_PERMISSION).toBe(false);
+    expect(loadConfig({ ...base, SSL_PERMISSION: 'true' }).SSL_PERMISSION).toBe(true);
+    expect(
+      loadConfig({ ...base, SSL_PERMISSION: '{ rejectUnauthorized: false }' }).SSL_PERMISSION,
+    ).toEqual({ rejectUnauthorized: false });
+    expect(
+      loadConfig({ ...base, SSL_PERMISSION: '{rejectUnauthorized:true}' }).SSL_PERMISSION,
+    ).toEqual({ rejectUnauthorized: true });
+    expect(() => loadConfig({ ...base, SSL_PERMISSION: 'maybe' })).toThrow(/SSL_PERMISSION/);
+  });
+
   it('rejects short API keys and missing secrets', () => {
     expect(() => loadConfig({ ...base, API_KEYS: 'short' })).toThrow(/at least 16/);
     expect(() => loadConfig({ ...base, DB_PASSWORD: '' })).toThrow(/DB_PASSWORD/);
